@@ -7,15 +7,20 @@ import fs from 'fs';
 
 const args = process.argv.slice(2);
 const asJson = args.includes('--json');
-const rest = args.filter((a) => a !== '--json');
+const packFilter = (args.find((a) => a.startsWith('--pack=')) || '').slice(7);
+const rest = args.filter((a) => !a.startsWith('--'));
 const file = rest[0];
-const only = rest[1] ? Number(rest[1]) : null;
+const only = rest[1] ? Number(rest[1]) : null;   // номер внутри пака
 
 const src = fs.readFileSync(file, 'utf8');
-const start = src.indexOf('const RAW_LEVELS = [');
-const end = src.indexOf('\n];', start);
-if (start < 0 || end < 0) { console.error('RAW_LEVELS не найден'); process.exit(1); }
-const RAW = eval(src.slice(start + 'const RAW_LEVELS = '.length, end + 3));
+// В файле игры может быть несколько паков: RAW_LEVELS, RAW_LEVELS_VOID, ...
+const PACKS = [];
+for (const m of src.matchAll(/const (RAW_LEVELS\w*) = \[/g)) {
+  const end = src.indexOf('\n];', m.index);
+  if (end < 0) continue;
+  PACKS.push({ name: m[1], levels: eval(src.slice(m.index + `const ${m[1]} = `.length, end + 3)) });
+}
+if (!PACKS.length) { console.error('RAW_LEVELS не найден'); process.exit(1); }
 
 const ck = (x, y) => x + ',' + y;
 const facing = (c) => [c[0][0] - c[1][0], c[0][1] - c[1][1]];
@@ -255,7 +260,10 @@ function asciiMap(lv) {
 
 const report = [];
 let allOk = true;
-RAW.forEach((lv, i) => {
+for (const pack of PACKS) {
+if (packFilter && !pack.name.toLowerCase().includes(packFilter.toLowerCase())) continue;
+if (!asJson) console.log(`\n### ${pack.name} — ${pack.levels.length} уровней`);
+pack.levels.forEach((lv, i) => {
   if (only != null && i + 1 !== only) return;
   const total = lv.snakes.reduce((a, s) => a + s.cells.length, 0);
   const geo = geometry(lv);
@@ -284,7 +292,7 @@ RAW.forEach((lv, i) => {
     : null;
 
   const row = {
-    n: i + 1, name: lv.name, w: lv.w, h: lv.h, target: lv.target, total, moves: cap,
+    pack: pack.name, n: i + 1, name: lv.name, w: lv.w, h: lv.h, target: lv.target, total, moves: cap,
     geo, solvable, sols: inCap.sols, minMoves: inCap.minMoves, bestSeq: inCap.bestSeq,
     launchRequired, bestNoLaunch: noL.best,
     solsLoose: loose ? loose.sols : null,
@@ -307,5 +315,6 @@ RAW.forEach((lv, i) => {
     console.log(`сложность≈${difficulty}` + (solvable ? ` | пример: ${inCap.bestSeq.join(', ')}` : ''));
   }
 });
+}
 if (asJson) console.log(JSON.stringify(report, null, 1));
 else console.log(allOk ? '\nВСЕ УРОВНИ КОРРЕКТНЫ И РЕШАЕМЫ' : '\n!! ЕСТЬ ПРОБЛЕМЫ');

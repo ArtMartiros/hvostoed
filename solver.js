@@ -2,12 +2,18 @@
 // Использование: node solver.js /путь/к/hvostoed.jsx
 import fs from 'fs';
 
-const file = process.argv[2] || '/mnt/user-data/outputs/hvostoed.jsx';
+const argv = process.argv.slice(2);
+const packFilter = (argv.find((a) => a.startsWith('--pack=')) || '').slice(7);
+const file = argv.find((a) => !a.startsWith('--')) || '/mnt/user-data/outputs/hvostoed.jsx';
 const src = fs.readFileSync(file, 'utf8');
-const start = src.indexOf('const RAW_LEVELS = [');
-const end = src.indexOf('\n];', start);
-if (start < 0 || end < 0) { console.error('RAW_LEVELS не найден'); process.exit(1); }
-const RAW = eval(src.slice(start + 'const RAW_LEVELS = '.length, end + 3));
+// В файле игры может быть несколько паков: RAW_LEVELS, RAW_LEVELS_VOID, ...
+const PACKS = [];
+for (const m of src.matchAll(/const (RAW_LEVELS\w*) = \[/g)) {
+  const end = src.indexOf('\n];', m.index);
+  if (end < 0) continue;
+  PACKS.push({ name: m[1], levels: eval(src.slice(m.index + `const ${m[1]} = `.length, end + 3)) });
+}
+if (!PACKS.length) { console.error('RAW_LEVELS не найден'); process.exit(1); }
 
 const ck = (x, y) => x + ',' + y;
 const facing = (c) => [c[0][0] - c[1][0], c[0][1] - c[1][1]];
@@ -114,7 +120,10 @@ function geometry(lv) {
 }
 
 let allOk = true;
-RAW.forEach((lv, i) => {
+for (const pack of PACKS) {
+if (packFilter && !pack.name.toLowerCase().includes(packFilter.toLowerCase())) continue;
+console.log(`\n### ${pack.name} — ${pack.levels.length} уровней`);
+pack.levels.forEach((lv, i) => {
   const total = lv.snakes.reduce((a, s) => a + s.cells.length, 0);
   const geo = geometry(lv);
   const cap = lv.moves != null ? lv.moves : null;
@@ -133,5 +142,6 @@ RAW.forEach((lv, i) => {
   );
   if (solvable) console.log('     пример: ' + inCap.bestSeq.join(', '));
 });
+}
 console.log(allOk ? '\nВСЕ УРОВНИ КОРРЕКТНЫ И РЕШАЕМЫ' : '\n!! ЕСТЬ ПРОБЛЕМЫ');
 process.exit(allOk ? 0 : 1);

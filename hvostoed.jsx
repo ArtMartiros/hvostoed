@@ -320,20 +320,132 @@ const RAW_LEVELS = [
   },
 ];
 
-const LEVELS = RAW_LEVELS.map((lv, i) => {
-  let ci = 0;
-  return {
-    ...lv,
-    id: i,
-    rocks: lv.rocks || [],
-    snakes: lv.snakes.map((s, si) => ({
-      id: "s" + si,
-      color: s.spiky ? "spiky" : ORDER[ci++ % ORDER.length],
-      spiky: !!s.spiky,
-      cells: s.cells,
-    })),
-  };
-});
+/* ---------- пак 2 «Пустота»: без валунов и колючек, ставка на переезд тела ---------- */
+const RAW_LEVELS_VOID = [
+  {
+    name: "Хоровод", lesson: "Тапни змею — она проглотит хвост, на который смотрит.",
+    w: 5, h: 3, target: 8,
+    snakes: [
+      { cells: [[1, 0], [0, 0]] },
+      { cells: [[3, 2], [4, 2], [4, 1], [4, 0]] },
+      { cells: [[0, 1], [0, 2]] },
+    ],
+  },
+  {
+    name: "Взгляд", lesson: "После обеда змея смотрит туда же, куда смотрела съеденная.",
+    w: 5, h: 4, target: 7,
+    snakes: [
+      { cells: [[1, 3], [0, 3]] },
+      { cells: [[3, 1], [3, 2], [3, 3]] },
+      { cells: [[4, 0], [3, 0]] },
+    ],
+  },
+  {
+    name: "Прицел", lesson: "Хвост — это обед. Голова или тело на пути — авария.",
+    w: 5, h: 4, target: 7,
+    snakes: [
+      { cells: [[2, 1], [2, 2], [2, 3]] },
+      { cells: [[1, 3], [0, 3]] },
+      { cells: [[3, 0], [2, 0]] },
+      { cells: [[3, 2], [4, 2]] },
+    ],
+  },
+  {
+    name: "Переезд", lesson: "Змея ест издалека — и переезжает сама. Её хвост окажется в новом месте.",
+    w: 7, h: 6, target: 8,
+    snakes: [
+      { cells: [[3, 3], [2, 3], [1, 3], [0, 3]] },
+      { cells: [[6, 2], [6, 3]] },
+      { cells: [[2, 1], [2, 0]] },
+      { cells: [[2, 4], [2, 5]] },
+    ],
+  },
+  {
+    name: "Затор", lesson: "Некого есть? Выпусти змею с поля — дорога откроется.",
+    w: 7, h: 5, target: 6,
+    snakes: [
+      { cells: [[3, 0], [3, 1], [3, 2], [3, 3], [3, 4]] },
+      { cells: [[1, 2], [0, 2]] },
+      { cells: [[5, 1], [5, 2]] },
+      { cells: [[6, 0], [5, 0]] },
+    ],
+  },
+  {
+    name: "Тесный угол", lesson: "Далёкий обед уводит тело целиком — и строка освобождается.",
+    w: 7, h: 6, target: 8,
+    snakes: [
+      { cells: [[3, 3], [3, 4], [3, 5]] },
+      { cells: [[4, 0], [3, 0]] },
+      { cells: [[1, 4], [0, 4]] },
+      { cells: [[5, 3], [6, 3], [6, 4]] },
+    ],
+  },
+  {
+    name: "Цепочка", lesson: "Цепочка тянется через всё поле. Вопрос — с какого звена начать.",
+    w: 7, h: 6, target: 9,
+    snakes: [
+      { cells: [[1, 2], [1, 3]] },
+      { cells: [[2, 0], [1, 0]] },
+      { cells: [[5, 2], [5, 1], [5, 0]] },
+      { cells: [[3, 5], [4, 5], [5, 5]] },
+      { cells: [[0, 4], [0, 5]] },
+    ],
+  },
+  {
+    name: "Уведи хвост", lesson: "Свой хвост можно убрать с чужого луча. Тогда луч найдёт добычу покрупнее.",
+    w: 7, h: 5, target: 8,
+    snakes: [
+      { cells: [[1, 0], [0, 0]] },
+      { cells: [[2, 2], [2, 1], [2, 0]] },
+      { cells: [[3, 4], [2, 4]] },
+      { cells: [[6, 4], [6, 3], [6, 2], [6, 1], [6, 0], [5, 0]] },
+    ],
+  },
+  {
+    name: "Два переезда", lesson: "Две стены. Одна уедет совсем, вторая подставит хвост. Порядок любой.",
+    w: 7, h: 7, target: 7,
+    snakes: [
+      { cells: [[1, 2], [0, 2]] },
+      { cells: [[3, 3], [3, 2], [3, 1]] },
+      { cells: [[4, 6], [3, 6]] },
+      { cells: [[5, 3], [5, 2], [5, 1]] },
+      { cells: [[6, 5], [5, 5]] },
+    ],
+  },
+  {
+    name: "Кольцо", lesson: "Всё поле — одно кольцо. Собери его в одну змею и не разорви пополам.",
+    w: 7, h: 7, target: 14,
+    snakes: [
+      { cells: [[1, 0], [0, 0]] },
+      { cells: [[4, 0], [3, 0]] },
+      { cells: [[6, 2], [6, 1], [6, 0]] },
+      { cells: [[5, 6], [6, 6]] },
+      { cells: [[2, 6], [3, 6]] },
+      { cells: [[0, 4], [0, 5], [0, 6]] },
+    ],
+  },
+];
+
+const buildPack = (raw) =>
+  raw.map((lv, i) => {
+    let ci = 0;
+    return {
+      ...lv,
+      id: i,
+      rocks: lv.rocks || [],
+      snakes: lv.snakes.map((s, si) => ({
+        id: "s" + si,
+        color: s.spiky ? "spiky" : ORDER[ci++ % ORDER.length],
+        spiky: !!s.spiky,
+        cells: s.cells,
+      })),
+    };
+  });
+
+const PACKS = [
+  { id: "void", name: "Пустота", note: "10 уровней · только змеи", levels: buildPack(RAW_LEVELS_VOID) },
+  { id: "classic", name: "Кампания", note: "25 уровней · валуны и колючие", levels: buildPack(RAW_LEVELS) },
+];
 
 /* ---------- логика (идентична солверу) ---------- */
 const facing = (cells) => [cells[0][0] - cells[1][0], cells[0][1] - cells[1][1]];
@@ -921,7 +1033,8 @@ function Game({ level, onExit, onWin, onNext, hasNext }) {
 }
 
 /* ---------- меню ---------- */
-function Menu({ stars, onPlay }) {
+function Menu({ stars, onPlay, packIdx, onPack }) {
+  const pack = PACKS[packIdx];
   return (
     <div className="hv-screen hv-menu">
       <div className="hv-logo">ХВОСТОЕД</div>
@@ -934,12 +1047,20 @@ function Menu({ stars, onPlay }) {
       <div className="hv-tag">Съешь соседа за хвост — и вырасти самой длинной</div>
       <ul className="hv-rules">
         <li><b>Тапни змею.</b> Если она смотрит на чужой хвост — проглотит его целиком.</li>
-        <li><b>Смотри, куда она смотрит.</b> Врежется в тело, валун или шипы — авария.</li>
+        <li><b>Смотри, куда она смотрит.</b> Врежется в тело{pack.id === "void" ? "" : ", валун"} или голову — авария.</li>
         <li><b>Некого есть?</b> Выпусти змею с поля и расчисти дорогу. Но её длина пропадёт.</li>
         <li><b>Цель:</b> хотя бы одна змея нужной длины. Неважно, какая.</li>
       </ul>
+      <div className="hv-packs">
+        {PACKS.map((p, i) => (
+          <button key={p.id} className={"hv-pack" + (i === packIdx ? " hv-pack-on" : "")} onClick={() => onPack(i)}>
+            <span className="hv-packname">{p.name}</span>
+            <span className="hv-packnote">{p.note}</span>
+          </button>
+        ))}
+      </div>
       <div className="hv-levels">
-        {LEVELS.map((lv) => (
+        {pack.levels.map((lv) => (
           <button key={lv.id} className="hv-lvcard" onClick={() => onPlay(lv.id)}>
             <span className="hv-lvbig">{lv.id + 1}</span>
             <span className="hv-lvinfo">
@@ -951,8 +1072,8 @@ function Menu({ stars, onPlay }) {
             <span className="hv-lvstars">
               {[0, 1, 2].map((i) => (
                 <Star key={i} size={14}
-                  fill={i < (stars[lv.id] || 0) ? "#EFAF3C" : "none"}
-                  color={i < (stars[lv.id] || 0) ? "#EFAF3C" : "#41544A"} />
+                  fill={i < (stars[pack.id + ":" + lv.id] || 0) ? "#EFAF3C" : "none"}
+                  color={i < (stars[pack.id + ":" + lv.id] || 0) ? "#EFAF3C" : "#41544A"} />
               ))}
             </span>
           </button>
@@ -966,22 +1087,33 @@ function Menu({ stars, onPlay }) {
 /* ---------- приложение ---------- */
 export default function App() {
   const [screen, setScreen] = useState("menu");
+  const [packIdx, setPackIdx] = useState(0);
   const [idx, setIdx] = useState(0);
   const [stars, setStars] = useState({});
+  const pack = PACKS[packIdx];
+  const levels = pack.levels;
 
   return (
     <div className="hv-root">
       <style>{CSS_TEXT}</style>
       {screen === "menu" ? (
-        <Menu stars={stars} onPlay={(i) => { setIdx(i); setScreen("game"); }} />
+        <Menu
+          stars={stars}
+          packIdx={packIdx}
+          onPack={(i) => { setPackIdx(i); setIdx(0); }}
+          onPlay={(i) => { setIdx(i); setScreen("game"); }}
+        />
       ) : (
         <Game
-          key={idx}
-          level={LEVELS[idx]}
+          key={pack.id + ":" + idx}
+          level={levels[idx]}
           onExit={() => setScreen("menu")}
-          onWin={(st) => setStars((p) => ({ ...p, [idx]: Math.max(p[idx] || 0, st) }))}
-          onNext={() => setIdx((i) => Math.min(i + 1, LEVELS.length - 1))}
-          hasNext={idx < LEVELS.length - 1}
+          onWin={(st) => setStars((p) => {
+            const k = pack.id + ":" + idx;
+            return { ...p, [k]: Math.max(p[k] || 0, st) };
+          })}
+          onNext={() => setIdx((i) => Math.min(i + 1, levels.length - 1))}
+          hasNext={idx < levels.length - 1}
         />
       )}
     </div>
@@ -1064,6 +1196,13 @@ const CSS_TEXT = `
 .hv-rules li{font-size:13.5px;line-height:1.45;color:#C9D6C2;background:#1B2A1F;border:1px solid #2C3E30;
   border-radius:14px;padding:10px 13px;}
 .hv-rules b{color:#F3F0E4;}
+.hv-packs{display:flex;gap:8px;width:100%;margin-bottom:12px;}
+.hv-pack{flex:1;display:flex;flex-direction:column;gap:2px;align-items:flex-start;background:#1B2A1F;
+  border:1px solid #2C3E30;border-radius:14px;padding:9px 12px;color:#8AA089;cursor:pointer;text-align:left;
+  font-family:Rubik,sans-serif;transition:border-color .12s ease,color .12s ease;}
+.hv-pack-on{border-color:#58A942;color:#F3F0E4;background:#20321F;}
+.hv-packname{font-weight:600;font-size:14px;}
+.hv-packnote{font-size:11px;opacity:.75;}
 .hv-levels{display:flex;flex-direction:column;gap:9px;width:100%;}
 .hv-lvcard{display:flex;align-items:center;gap:12px;background:#1B2A1F;border:1px solid #2C3E30;border-radius:16px;
   padding:11px 14px;color:#F3F0E4;cursor:pointer;text-align:left;font-family:Rubik,sans-serif;transition:transform .12s ease;}
