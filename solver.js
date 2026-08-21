@@ -1,0 +1,137 @@
+// Солвер «Хвостоеда» v2: валуны (rocks), колючие змеи (spiky), лимит ходов (moves)
+// Использование: node solver.js /путь/к/hvostoed.jsx
+import fs from 'fs';
+
+const file = process.argv[2] || '/mnt/user-data/outputs/hvostoed.jsx';
+const src = fs.readFileSync(file, 'utf8');
+const start = src.indexOf('const RAW_LEVELS = [');
+const end = src.indexOf('\n];', start);
+if (start < 0 || end < 0) { console.error('RAW_LEVELS не найден'); process.exit(1); }
+const RAW = eval(src.slice(start + 'const RAW_LEVELS = '.length, end + 3));
+
+const ck = (x, y) => x + ',' + y;
+const facing = (c) => [c[0][0] - c[1][0], c[0][1] - c[1][1]];
+
+function occMap(snakes) {
+  const m = new Map();
+  snakes.forEach((s, si) => s.cells.forEach(([x, y], ci) => m.set(ck(x, y), { si, ci, len: s.cells.length, spiky: s.spiky })));
+  return m;
+}
+
+function raycast(snakes, i, W, H, rockSet) {
+  const s = snakes[i];
+  const [dx, dy] = facing(s.cells);
+  const occ = occMap(snakes);
+  let [x, y] = s.cells[0];
+  const gap = [];
+  for (;;) {
+    x += dx; y += dy;
+    if (x < 0 || y < 0 || x >= W || y >= H) return { kind: 'edge', gap };
+    if (rockSet.has(ck(x, y))) return { kind: 'rock' };
+    const hit = occ.get(ck(x, y));
+    if (hit) {
+      if (hit.si === i) return { kind: 'self' };
+      if (hit.ci === hit.len - 1) return hit.spiky ? { kind: 'spikyTail' } : { kind: 'tail', target: hit.si, gap };
+      return { kind: 'block' };
+    }
+    gap.push([x, y]);
+  }
+}
+
+function applyEat(snakes, i, ray) {
+  const prey = snakes[ray.target];
+  const food = new Set(prey.cells.map(([x, y]) => ck(x, y)));
+  const path = ray.gap.concat(prey.cells.slice().reverse());
+  let cells = snakes[i].cells.map((c) => c.slice());
+  for (const p of path) {
+    cells.unshift([p[0], p[1]]);
+    if (!food.has(ck(p[0], p[1]))) cells.pop();
+  }
+  const out = [];
+  snakes.forEach((s, si) => {
+    if (si === ray.target) return;
+    out.push(si === i ? { ...s, cells } : s);
+  });
+  return out;
+}
+
+const key = (s) => s.map((x) => (x.spiky ? '!' : '') + x.cells.map((c) => c.join('.')).join(';')).sort().join('|');
+const maxLen = (s) => Math.max(0, ...s.map((x) => x.cells.length));
+
+// Полный перебор с метриками. moveCap: ограничение длины решения (null = без лимита)
+function solve(lv, { allowLaunch, moveCap }) {
+  const W = lv.w, H = lv.h;
+  const rockSet = new Set((lv.rocks || []).map(([x, y]) => ck(x, y)));
+  const seen = new Set();
+  let best = 0, sols = 0, minMoves = Infinity, bestSeq = null;
+  const CAP = 500;
+  function dfs(snakes, depth, seq) {
+    const ml = maxLen(snakes);
+    if (ml > best) best = ml;
+    if (ml >= lv.target) {
+      sols++;
+      if (depth < minMoves) { minMoves = depth; bestSeq = seq.slice(); }
+      return;
+    }
+    if (moveCap != null && depth >= moveCap) return;
+    const k = key(snakes) + '#' + depth;
+    if (seen.has(k)) return;
+    seen.add(k);
+    if (sols >= CAP) return;
+    for (let i = 0; i < snakes.length; i++) {
+      const r = raycast(snakes, i, W, H, rockSet);
+      if (r.kind === 'tail') dfs(applyEat(snakes, i, r), depth + 1, seq.concat(['eat s' + i + '>s' + r.target]));
+      else if (r.kind === 'edge' && allowLaunch) dfs(snakes.filter((_, si) => si !== i), depth + 1, seq.concat(['launch s' + i]));
+      if (sols >= CAP) return;
+    }
+  }
+  dfs(lv.snakes.map((s) => ({ cells: s.cells, spiky: !!s.spiky })), 0, []);
+  return { best, sols, minMoves: sols ? minMoves : null, bestSeq };
+}
+
+function geometry(lv) {
+  const seenC = new Set();
+  const rockSet = new Set((lv.rocks || []).map(([x, y]) => ck(x, y)));
+  for (const [x, y] of lv.rocks || []) {
+    if (x < 0 || y < 0 || x >= lv.w || y >= lv.h) return 'валун вне поля';
+  }
+  for (const s of lv.snakes) {
+    if (s.cells.length < 2) return 'змея короче 2';
+    for (let j = 0; j < s.cells.length; j++) {
+      const [x, y] = s.cells[j];
+      if (x < 0 || y < 0 || x >= lv.w || y >= lv.h) return 'клетка вне поля';
+      const k = ck(x, y);
+      if (seenC.has(k)) return 'пересечение змей: ' + k;
+      if (rockSet.has(k)) return 'змея на валуне: ' + k;
+      seenC.add(k);
+      if (j > 0) {
+        const [px, py] = s.cells[j - 1];
+        if (Math.abs(px - x) + Math.abs(py - y) !== 1) return 'разрыв тела';
+      }
+    }
+  }
+  return 'ok';
+}
+
+let allOk = true;
+RAW.forEach((lv, i) => {
+  const total = lv.snakes.reduce((a, s) => a + s.cells.length, 0);
+  const geo = geometry(lv);
+  const cap = lv.moves != null ? lv.moves : null;
+  const inCap = solve(lv, { allowLaunch: true, moveCap: cap });
+  const noL = solve(lv, { allowLaunch: false, moveCap: cap });
+  const loose = cap != null ? solve(lv, { allowLaunch: true, moveCap: null }) : null;
+  const solvable = inCap.sols > 0;
+  if (geo !== 'ok' || !solvable) allOk = false;
+  console.log(
+    `${String(i + 1).padStart(2)}. ${lv.name.padEnd(10)} ${lv.w}x${lv.h} цель=${lv.target} total=${total}` +
+    (cap != null ? ` ходы<=${cap}` : '') +
+    ` | гео=${geo} | решений=${inCap.sols} minMoves=${inCap.minMoves}` +
+    ` | без выпусков: best=${noL.best} sols=${noL.sols}` +
+    (loose ? ` | без лимита ходов: sols=${loose.sols} minMoves=${loose.minMoves}` : '') +
+    ` | выпуск обязателен=${noL.sols === 0 && solvable} | РЕШАЕМ=${solvable}`
+  );
+  if (solvable) console.log('     пример: ' + inCap.bestSeq.join(', '));
+});
+console.log(allOk ? '\nВСЕ УРОВНИ КОРРЕКТНЫ И РЕШАЕМЫ' : '\n!! ЕСТЬ ПРОБЛЕМЫ');
+process.exit(allOk ? 0 : 1);
