@@ -424,18 +424,77 @@ const RAW_LEVELS_VOID = [
       { cells: [[0, 4], [0, 5], [0, 6]] },
     ],
   },
+  {
+    name: "Обвал", lesson: "Одиннадцать змей должны стать одной. Веди одну цепь и не начинай вторую.",
+    w: 9, h: 11, target: 62,
+    snakes: [
+      { cells: [[6, 6], [6, 5], [5, 5]] },
+      { cells: [[6, 8], [6, 7]] },
+      { cells: [[5, 8], [5, 9], [5, 10], [4, 10], [4, 9], [4, 8], [4, 7], [3, 7]] },
+      { cells: [[5, 6], [5, 7]] },
+      { cells: [[1, 6], [0, 6], [0, 5], [0, 4], [1, 4], [1, 3], [1, 2], [0, 2], [0, 3]] },
+      { cells: [[8, 2], [8, 3]] },
+      { cells: [[2, 4], [2, 3], [3, 3], [3, 2], [3, 1], [4, 1], [5, 1], [5, 2], [6, 2], [6, 3], [6, 4], [7, 4]] },
+      { cells: [[8, 6], [8, 7], [7, 7], [7, 8], [7, 9], [6, 9], [6, 10]] },
+      { cells: [[7, 2], [7, 1], [7, 0], [8, 0]] },
+      { cells: [[3, 8], [3, 9], [2, 9], [1, 9], [1, 8], [0, 8], [0, 7], [1, 7], [2, 7], [2, 6]] },
+      { cells: [[8, 4], [8, 5], [7, 5]] },
+    ],
+  },
+  {
+    name: "Колодец", lesson: "Тупик близко: сначала прикинь весь путь, потом тапай.",
+    w: 8, h: 10, target: 58,
+    snakes: [
+      { cells: [[5, 1], [4, 1], [4, 0], [3, 0]] },
+      { cells: [[5, 3], [5, 2], [4, 2], [4, 3], [3, 3], [3, 4], [4, 4], [4, 5]] },
+      { cells: [[3, 1], [3, 2], [2, 2], [2, 1], [1, 1], [1, 2], [0, 2], [0, 3], [0, 4], [1, 4], [1, 5], [0, 5]] },
+      { cells: [[4, 9], [5, 9], [5, 8]] },
+      { cells: [[1, 8], [0, 8], [0, 9], [1, 9]] },
+      { cells: [[0, 6], [0, 7], [1, 7], [1, 6], [2, 6]] },
+      { cells: [[3, 6], [3, 7], [4, 7], [4, 8], [3, 8]] },
+      { cells: [[3, 5], [2, 5], [2, 4]] },
+      { cells: [[6, 8], [7, 8], [7, 7], [6, 7], [6, 6], [7, 6], [7, 5], [7, 4], [6, 4], [6, 5], [5, 5], [5, 4]] },
+      { cells: [[2, 7], [2, 8]] },
+    ],
+  },
 ];
+
+// Цвета раздаём по кругу, но соседям (клетки бок о бок) один цвет не даём:
+// на больших полях две однотонные змеи впритык читаются как одна.
+const paintPack = (lv) => {
+  const owner = new Map();
+  lv.snakes.forEach((s, si) => s.cells.forEach(([x, y]) => owner.set(x + "," + y, si)));
+  const near = lv.snakes.map(() => new Set());
+  lv.snakes.forEach((s, si) =>
+    s.cells.forEach(([x, y]) =>
+      [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dx, dy]) => {
+        const o = owner.get(x + dx + "," + (y + dy));
+        if (o != null && o !== si) { near[si].add(o); near[o].add(si); }
+      })));
+  const colors = [];
+  let ci = 0;
+  lv.snakes.forEach((s, si) => {
+    if (s.spiky) { colors[si] = "spiky"; return; }
+    const taken = new Set([...near[si]].map((o) => colors[o]).filter(Boolean));
+    for (let k = 0; k < ORDER.length; k++) {
+      const c = ORDER[(ci + k) % ORDER.length];
+      if (!taken.has(c)) { colors[si] = c; ci += k + 1; return; }
+    }
+    colors[si] = ORDER[ci++ % ORDER.length];
+  });
+  return colors;
+};
 
 const buildPack = (raw) =>
   raw.map((lv, i) => {
-    let ci = 0;
+    const colors = paintPack(lv);
     return {
       ...lv,
       id: i,
       rocks: lv.rocks || [],
       snakes: lv.snakes.map((s, si) => ({
         id: "s" + si,
-        color: s.spiky ? "spiky" : ORDER[ci++ % ORDER.length],
+        color: colors[si],
         spiky: !!s.spiky,
         cells: s.cells,
       })),
@@ -443,7 +502,7 @@ const buildPack = (raw) =>
   });
 
 const PACKS = [
-  { id: "void", name: "Пустота", note: "10 уровней · только змеи", levels: buildPack(RAW_LEVELS_VOID) },
+  { id: "void", name: "Пустота", note: "12 уровней · только змеи", levels: buildPack(RAW_LEVELS_VOID) },
   { id: "classic", name: "Кампания", note: "25 уровней · валуны и колючие", levels: buildPack(RAW_LEVELS) },
 ];
 
