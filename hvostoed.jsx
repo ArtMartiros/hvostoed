@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Undo2, RotateCcw, Star, Play } from "lucide-react";
+import { ChevronLeft, Undo2, RotateCcw, Star, Play, Lightbulb } from "lucide-react";
 
 /* ================================================================
    ХВОСТОЕД — прототип v3
@@ -775,7 +775,76 @@ function applyEat(snakes, eaterId, ray) {
 
 const maxLen = (snakes) => Math.max(0, ...snakes.map((s) => s.cells.length));
 
-/* ---------- построение хода для аниматора ---------- */
+/* ---------- подсказка: один верный ход за раз ----------
+   Ищем не «какой-нибудь» ход, а первый ход настоящей лучшей линии, и считаем её
+   теми же raycast/applyEat, что и игра, — тогда совет не может разойтись с правилами.
+   На целевых уровнях это кратчайшая победа, на полях рекорда — самая длинная змея,
+   какую находит перебор в ширину. План кэшируется целиком: пока игрок идёт по нему,
+   следующая подсказка бесплатна; сошёл с линии — считаем заново. */
+const stateKey = (snakes) =>
+  snakes.map((s) => s.cells.map((c) => c.join(".")).join(";")).sort().join("|");
+
+function legalMoves(snakes, W, H, rockSet) {
+  const out = [];
+  for (const s of snakes) {
+    const ray = raycast(snakes, s.id, W, H, rockSet);
+    if (ray.kind === "tail") out.push({ sid: s.id, next: applyEat(snakes, s.id, ray) });
+    else if (ray.kind === "edge") out.push({ sid: s.id, next: snakes.filter((q) => q.id !== s.id) });
+  }
+  return out;
+}
+
+// Кратчайшая победа. Бюджет узлов общий на все глубины: если позиция безнадёжна,
+// перебор не имеет права подвесить вкладку — вернём null и отдадим ход эвристике.
+function planGoal(level, snakes, rockSet) {
+  const budget = { left: 150000 };
+  let seq = null;
+  const dfs = (sn, d, cap, path, seen) => {
+    if (maxLen(sn) >= level.target) { seq = path.slice(); return true; }
+    if (d >= cap || budget.left <= 0) return false;
+    const k = stateKey(sn) + "#" + d;
+    if (seen.has(k)) return false;
+    seen.add(k); budget.left--;
+    for (const m of legalMoves(sn, level.w, level.h, rockSet)) {
+      path.push({ k: stateKey(sn), sid: m.sid });
+      if (dfs(m.next, d + 1, cap, path, seen)) return true;
+      path.pop();
+    }
+    return false;
+  };
+  for (let cap = 1; cap <= snakes.length && budget.left > 0; cap++) {
+    if (dfs(snakes, 0, cap, [], new Set())) return seq;
+  }
+  return null;
+}
+
+// Самая длинная змея. Ширина 160: на всех трёх полях даёт тот же результат, что и 320,
+// и укладывается в полсекунды на самом плотном (29 змей).
+function planLongest(level, snakes, rockSet) {
+  const total = (sn) => sn.reduce((t, s) => t + s.cells.length, 0);
+  let layer = [{ sn: snakes, k: stateKey(snakes), from: null, sid: null }];
+  let best = maxLen(snakes), bestNode = null;
+  for (let d = 0; d < 60 && layer.length; d++) {
+    const next = [], seen = new Set();
+    for (const nd of layer) {
+      for (const m of legalMoves(nd.sn, level.w, level.h, rockSet)) {
+        const k = stateKey(m.next);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        const node = { sn: m.next, k, from: nd, sid: m.sid };
+        if (maxLen(m.next) > best) { best = maxLen(m.next); bestNode = node; }
+        next.push(node);
+      }
+    }
+    next.sort((a, b) => (maxLen(b.sn) - maxLen(a.sn)) || (total(b.sn) - total(a.sn)));
+    layer = next.slice(0, 160);
+  }
+  if (!bestNode) return null;
+  const path = [];              // ссылка на родителя вместо копии пути в каждом узле
+  for (let n = bestNode; n.from; n = n.from) path.unshift({ k: n.from.k, sid: n.sid });
+  return path;
+}
+
 function buildEatMove(snakes, sid, ray) {
   const eater = snakes.find((s) => s.id === sid);
   const prey = snakes.find((s) => s.id === ray.target);
@@ -981,6 +1050,9 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
   const isRec = level.mode === "record";
   const [snakes, setSnakes] = useState(() => clone(level.snakes));
   const [runBest, setRunBest] = useState(() => maxLen(level.snakes));
+  const [hints, setHints] = useState(0);
+  const hintsRef = useRef(0);          // commit читает счётчик синхронно, состояние туда не успевает
+  const planRef = useRef(new Map());   // состояние поля -> змея, по которой надо тапнуть
   const [history, setHistory] = useState([]);
   const [launched, setLaunched] = useState(0);
   const [phase, setPhase] = useState("idle"); // idle | anim | crash | won | lost | done
@@ -1029,7 +1101,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
       setPlus({ x: mv.lostAt[0], y: mv.lostAt[1], n: mv.lost, sign: "−", key: Date.now() });
     }
     const ml = maxLen(mv.finalSnakes);
-    if (ml > runBest) { setRunBest(ml); if (isRec) onRecord(ml); }
+    if (ml > runBest) { setRunBest(ml); if (isRec && hintsRef.current === 0) onRecord(ml); }
     if (!isRec && ml >= level.target) {
       const stars = 1 + (mv.launchedAfter === 0 ? 1 : 0) + (mv.finalSnakes.length === 1 ? 1 : 0);
       setWonInfo({ len: ml, stars, ateAll: mv.finalSnakes.length === 1 });
@@ -1181,6 +1253,28 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
     }
   }
 
+  function hint() {
+    if (phase !== "idle") return;
+    const k = stateKey(snakes);
+    let sid = planRef.current.get(k);
+    if (sid == null) {
+      const plan = isRec
+        ? planLongest(level, snakes, rockSet)
+        : (planGoal(level, snakes, rockSet) || planLongest(level, snakes, rockSet));
+      if (!plan || !plan.length) {
+        setToast(isRec
+          ? "Больше не вырасти — партию можно заканчивать."
+          : "Отсюда цели уже не достичь. Отмени ход или начни заново.");
+        return;
+      }
+      planRef.current = new Map(plan.map((st) => [st.k, st.sid]));
+      sid = planRef.current.get(k) != null ? planRef.current.get(k) : plan[0].sid;
+    }
+    hintsRef.current += 1;
+    setHints(hintsRef.current);
+    tapSnake(sid);
+  }
+
   function undo() {
     if (phase === "anim") return;
     if (crashed) { forgiveCrash(); return; }
@@ -1198,6 +1292,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
     if (phase === "anim") return;
     clearTimeout(crashTimerRef.current);
     setSnakes(clone(level.snakes)); setHistory([]); setLaunched(0); setRunBest(maxLen(level.snakes));
+    hintsRef.current = 0; setHints(0); planRef.current = new Map();
     setPhase("idle"); setWonInfo(null); setLostReason(null); setCrashed(false);
     setFx(null); setToast(null); setPlus(null);
   }
@@ -1221,6 +1316,11 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
       <header className="hv-top">
         <button className="hv-icon" onClick={onExit} aria-label="К уровням"><ChevronLeft size={22} /></button>
         <div className="hv-lvname"><span className="hv-lvnum">{level.id + 1}</span> {level.name}</div>
+        <button className={"hv-icon" + (hints ? " hv-hinted" : "")} onClick={hint}
+          disabled={phase !== "idle"} aria-label="Подсказать ход">
+          <Lightbulb size={19} />
+          {hints ? <span className="hv-hintn">{hints}</span> : null}
+        </button>
         <button className="hv-icon" onClick={undo} disabled={(!history.length && !crashed) || phase === "anim"} aria-label="Отменить ход">
           <Undo2 size={20} />
         </button>
@@ -1319,6 +1419,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
                 {level.proof === "beam" ? " · машина собирает " + level.ceiling : " из " + level.ceiling}
                 {runBest > (record || 0) ? "" : " · твой рекорд " + (record || 0)}
               </div>
+              {hints ? <div className="hv-hintnote">Партия с подсказками ({hints}) — в рекорд не идёт</div> : null}
               <div className="hv-btnrow">
                 <button className="hv-btn ghost" onClick={undo} disabled={!history.length}>
                   <Undo2 size={15} /> Отменить ход
@@ -1506,6 +1607,11 @@ const CSS_TEXT = `
 .hv-mark.hit{background:#FFFDF4;opacity:.75;}
 .hv-endbtn{margin-left:10px;font:inherit;font-weight:800;color:#0F1A12;background:#EFAF3C;
   border:0;border-radius:8px;padding:3px 10px;cursor:pointer;}
+.hv-icon{position:relative;}
+.hv-icon.hv-hinted{color:#EFAF3C;}
+.hv-hintn{position:absolute;top:1px;right:1px;min-width:14px;height:14px;line-height:14px;
+  border-radius:7px;background:#EFAF3C;color:#0F1A12;font-size:9px;font-weight:800;padding:0 3px;}
+.hv-hintnote{margin-top:8px;font-size:12px;color:#EFAF3C;}
 .hv-fill{height:100%;border-radius:8px;background:linear-gradient(90deg,#58A942,#9CCB3B);transition:width .35s ease;}
 .hv-count{font-size:13px;font-weight:600;color:#B9C8B4;min-width:52px;text-align:right;font-variant-numeric:tabular-nums;}
 .hv-slack{font-size:12px;color:#9FB29B;background:#1B2A1F;border:1px solid #2C3E30;border-radius:10px;
