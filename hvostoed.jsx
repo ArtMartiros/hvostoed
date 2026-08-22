@@ -569,6 +569,81 @@ const RAW_LEVELS_VOID = [
   },
 ];
 
+
+/* ---------- режим рекорда ----------
+   Поле без цели: играешь, пока есть кого есть, счёт — самая длинная змея за партию.
+   Поле нарезано из одного пути с зазорами, поэтому цепь «съесть всё» существует
+   по построению (ceiling проверяется симуляцией в records.mjs), но каждая еда через
+   зазор утаскивает хвост едока и рвёт чужие прицелы — порядок решает.
+   Случайная игра берёт медианой 36 из 140, лучшая известная линия — все 140 за 28 ходов. */
+const RAW_FIELDS = [
+  {
+    name: "Большая пустошь",
+    lesson: "Цели нет — расти, пока есть кого есть. Счёт — самая длинная змея за партию.",
+    w: 12, h: 16, ceiling: 140, proof: "chain", mass: 140, marks: [60, 95, 125],
+    snakes: [
+      { cells: [[5, 14], [4, 14], [3, 14]] },
+      { cells: [[2, 14], [1, 14], [1, 13], [0, 13], [0, 14], [0, 15]] },
+      { cells: [[2, 15], [3, 15]] },
+      { cells: [[4, 15], [5, 15], [6, 15], [6, 14], [7, 14], [7, 15]] },
+      { cells: [[9, 15], [10, 15], [11, 15], [11, 14], [11, 13], [11, 12], [11, 11]] },
+      { cells: [[11, 10], [11, 9], [11, 8], [10, 8]] },
+      { cells: [[10, 10], [10, 11], [9, 11], [9, 10], [8, 10], [8, 11], [8, 12]] },
+      { cells: [[5, 12], [4, 12], [4, 13]] },
+      { cells: [[3, 13], [2, 13], [2, 12], [3, 12], [3, 11], [4, 11]] },
+      { cells: [[4, 10], [4, 9], [5, 9], [5, 8], [6, 8]] },
+      { cells: [[6, 9], [6, 10], [5, 10], [5, 11], [6, 11], [7, 11]] },
+      { cells: [[7, 9], [7, 8], [8, 8], [8, 9], [9, 9]] },
+      { cells: [[9, 8], [9, 7]] },
+      { cells: [[7, 7], [6, 7], [5, 7], [5, 6]] },
+      { cells: [[6, 6], [7, 6], [7, 5], [8, 5], [8, 6]] },
+      { cells: [[9, 6], [10, 6], [10, 7], [11, 7], [11, 6], [11, 5]] },
+      { cells: [[10, 5], [9, 5], [9, 4], [9, 3], [9, 2], [9, 1], [10, 1]] },
+      { cells: [[10, 2], [10, 3], [10, 4], [11, 4], [11, 3]] },
+      { cells: [[11, 2], [11, 1], [11, 0]] },
+      { cells: [[9, 0], [8, 0]] },
+      { cells: [[8, 2], [8, 3], [8, 4]] },
+      { cells: [[7, 4], [6, 4], [6, 5], [5, 5]] },
+      { cells: [[5, 4], [5, 3], [6, 3], [7, 3], [7, 2], [6, 2]] },
+      { cells: [[5, 2], [4, 2], [4, 1], [5, 1], [6, 1], [7, 1], [7, 0]] },
+      { cells: [[5, 0], [4, 0], [3, 0], [2, 0], [1, 0], [0, 0], [0, 1]] },
+      { cells: [[2, 1], [3, 1], [3, 2]] },
+      { cells: [[2, 2], [1, 2], [0, 2], [0, 3], [1, 3], [1, 4], [0, 4]] },
+      { cells: [[0, 6], [0, 7]] },
+      { cells: [[1, 7], [2, 7], [3, 7], [3, 6], [2, 6], [1, 6], [1, 5]] },
+    ],
+  },  {
+    name: "Разлёт",
+    lesson: "Пустоты между змеями — рабочее пространство: почти каждый обед здесь дальний выстрел.",
+    w: 12, h: 16, ceiling: 58, proof: "beam", mass: 98, marks: [30, 45, 58],
+    snakes: [
+      { cells: [[1, 14], [1, 15], [0, 15], [0, 14]] },
+      { cells: [[0, 8], [0, 7], [0, 6]] },
+      { cells: [[4, 10], [3, 10], [3, 9], [3, 8], [2, 8]] },
+      { cells: [[0, 5], [1, 5]] },
+      { cells: [[0, 4], [0, 3], [1, 3], [1, 4], [2, 4]] },
+      { cells: [[2, 2], [2, 3]] },
+      { cells: [[0, 1], [0, 0], [1, 0], [1, 1], [2, 1], [2, 0], [3, 0]] },
+      { cells: [[3, 2], [3, 3], [3, 4], [4, 4], [4, 3]] },
+      { cells: [[4, 1], [4, 0], [5, 0], [6, 0], [7, 0], [7, 1]] },
+      { cells: [[6, 1], [5, 1], [5, 2]] },
+      { cells: [[7, 4], [8, 4], [8, 3], [8, 2], [8, 1], [8, 0]] },
+      { cells: [[10, 0], [11, 0], [11, 1], [10, 1], [9, 1], [9, 2]] },
+      { cells: [[11, 9], [11, 10], [11, 11], [10, 11], [10, 10], [9, 10]] },
+      { cells: [[8, 12], [8, 13], [9, 13], [10, 13], [10, 14]] },
+      { cells: [[6, 6], [6, 7], [5, 7], [5, 6], [4, 6], [4, 5], [5, 5], [6, 5]] },
+      { cells: [[7, 6], [8, 6], [9, 6]] },
+      { cells: [[9, 7], [9, 8], [8, 8], [8, 7], [7, 7]] },
+      { cells: [[5, 8], [6, 8], [6, 9], [7, 9], [7, 8]] },
+      { cells: [[7, 10], [6, 10], [5, 10], [5, 9]] },
+      { cells: [[6, 13], [6, 12], [6, 11], [5, 11]] },
+      { cells: [[5, 13], [5, 12]] },
+      { cells: [[3, 11], [2, 11]] },
+    ],
+  },
+
+];
+
 // Цвета раздаём по кругу, но соседям (клетки бок о бок) один цвет не даём:
 // на больших полях две однотонные змеи впритык читаются как одна.
 const paintPack = (lv) => {
@@ -595,12 +670,13 @@ const paintPack = (lv) => {
   return colors;
 };
 
-const buildPack = (raw) =>
+const buildPack = (raw, mode) =>
   raw.map((lv, i) => {
     const colors = paintPack(lv);
     return {
       ...lv,
       id: i,
+      mode: mode || "goal",
       rocks: lv.rocks || [],
       snakes: lv.snakes.map((s, si) => ({
         id: "s" + si,
@@ -613,6 +689,7 @@ const buildPack = (raw) =>
 
 const PACKS = [
   { id: "void", name: "Пустота", note: "19 уровней · только змеи", levels: buildPack(RAW_LEVELS_VOID) },
+  { id: "record", name: "Рекорд", note: "2 поля 12×16 · без цели, на счёт", levels: buildPack(RAW_FIELDS, "record") },
   { id: "classic", name: "Кампания", note: "25 уровней · валуны и колючие", levels: buildPack(RAW_LEVELS) },
 ];
 
@@ -872,11 +949,13 @@ function RayView({ ray, from, color }) {
 }
 
 /* ---------- игра ---------- */
-function Game({ level, onExit, onWin, onNext, hasNext }) {
+function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
+  const isRec = level.mode === "record";
   const [snakes, setSnakes] = useState(() => clone(level.snakes));
+  const [runBest, setRunBest] = useState(() => maxLen(level.snakes));
   const [history, setHistory] = useState([]);
   const [launched, setLaunched] = useState(0);
-  const [phase, setPhase] = useState("idle"); // idle | anim | crash | won | lost
+  const [phase, setPhase] = useState("idle"); // idle | anim | crash | won | lost | done
   const [fx, setFx] = useState(null);
   const [toast, setToast] = useState(null);
   const [plus, setPlus] = useState(null);
@@ -899,7 +978,7 @@ function Game({ level, onExit, onWin, onNext, hasNext }) {
   // Запас = сколько длины ещё можно потерять на выпусках. Показываем только там,
   // где цель меньше суммы клеток, — на бюджетных уровнях без этого числа не сыграть.
   const onBoard = snakes.reduce((a, s) => a + s.cells.length, 0);
-  const hasBudget = level.snakes.reduce((a, s) => a + s.cells.length, 0) > level.target;
+  const hasBudget = !isRec && level.snakes.reduce((a, s) => a + s.cells.length, 0) > level.target;
   const slack = onBoard - level.target;
   const idle = phase === "idle";
   const canEatAny = idle && snakes.some((s) => raycast(snakes, s.id, level.w, level.h, rockSet).kind === "tail");
@@ -922,7 +1001,8 @@ function Game({ level, onExit, onWin, onNext, hasNext }) {
       setPlus({ x: mv.lostAt[0], y: mv.lostAt[1], n: mv.lost, sign: "−", key: Date.now() });
     }
     const ml = maxLen(mv.finalSnakes);
-    if (ml >= level.target) {
+    if (ml > runBest) { setRunBest(ml); if (isRec) onRecord(ml); }
+    if (!isRec && ml >= level.target) {
       const stars = 1 + (mv.launchedAfter === 0 ? 1 : 0) + (mv.finalSnakes.length === 1 ? 1 : 0);
       setWonInfo({ len: ml, stars, ateAll: mv.finalSnakes.length === 1 });
       setPhase("won");
@@ -932,6 +1012,7 @@ function Game({ level, onExit, onWin, onNext, hasNext }) {
     const anyEat = mv.finalSnakes.some((s) => raycast(mv.finalSnakes, s.id, level.w, level.h, rockSet).kind === "tail");
     const anyLaunch = mv.finalSnakes.some((s) => raycast(mv.finalSnakes, s.id, level.w, level.h, rockSet).kind === "edge");
     if (!anyEat && !anyLaunch) {
+      if (isRec) { setPhase("done"); return; }
       setLostReason("Все пути закрыты — двигаться некому.");
       setPhase("lost");
     } else {
@@ -944,9 +1025,13 @@ function Game({ level, onExit, onWin, onNext, hasNext }) {
   function crash(reason, sid, ray, from) {
     setToast(reason);
     showFx({ ray, from, color: "#E05548", shakeId: sid });
+    setPhase("crash");
+    if (isRec) {                       // на рекордном поле промах — просто тычок, партия идёт дальше
+      crashTimerRef.current = setTimeout(() => setPhase("idle"), 420);
+      return;
+    }
     setCrashed(true);
     setLostReason(reason);
-    setPhase("crash");
     crashTimerRef.current = setTimeout(() => setPhase("lost"), 700);
   }
 
@@ -1045,12 +1130,12 @@ function Game({ level, onExit, onWin, onNext, hasNext }) {
     if (ray.kind === "tail") {
       const mv = buildEatMove(snakes, sid, ray);
       mv.launchedAfter = launched;
-      setHistory((hh) => [...hh, { snakes: clone(snakes), launched }]);
+      setHistory((hh) => [...hh, { snakes: clone(snakes), launched, runBest }]);
       runMove(mv);
     } else if (ray.kind === "edge") {
       const mv = buildLaunchMove(snakes, sid, ray);
       mv.launchedAfter = launched + 1;
-      setHistory((hh) => [...hh, { snakes: clone(snakes), launched }]);
+      setHistory((hh) => [...hh, { snakes: clone(snakes), launched, runBest }]);
       setLaunched((n) => n + 1);
       runMove(mv);
     } else if (ray.kind === "self") {
@@ -1076,6 +1161,7 @@ function Game({ level, onExit, onWin, onNext, hasNext }) {
     setHistory((hh) => hh.slice(0, -1));
     setSnakes(last.snakes);
     setLaunched(last.launched);
+    setRunBest(last.runBest != null ? last.runBest : maxLen(last.snakes));
     setPhase("idle"); setWonInfo(null); setLostReason(null);
     setFx(null); setToast(null); setPlus(null);
   }
@@ -1083,14 +1169,14 @@ function Game({ level, onExit, onWin, onNext, hasNext }) {
   function restart() {
     if (phase === "anim") return;
     clearTimeout(crashTimerRef.current);
-    setSnakes(clone(level.snakes)); setHistory([]); setLaunched(0);
+    setSnakes(clone(level.snakes)); setHistory([]); setLaunched(0); setRunBest(maxLen(level.snakes));
     setPhase("idle"); setWonInfo(null); setLostReason(null); setCrashed(false);
     setFx(null); setToast(null); setPlus(null);
   }
 
   const stuckMsg =
-    idle && best < level.target && !canEatAny && canLaunchAny
-      ? "Съесть некого. Выпусти змею, чтобы расчистить путь, или отмени ход."
+    idle && (isRec || best < level.target) && !canEatAny && canLaunchAny
+      ? "Съесть некого. Выпусти змею, чтобы расчистить путь, или закончи партию."
       : null;
 
   const W = level.w * CS, H = level.h * CS;
@@ -1115,13 +1201,26 @@ function Game({ level, onExit, onWin, onNext, hasNext }) {
         </button>
       </header>
 
-      <div className="hv-goalrow">
-        <span className="hv-goal">Цель ≥ {level.target}</span>
-        <div className="hv-bar" role="progressbar" aria-valuenow={best} aria-valuemax={level.target}>
-          <div className="hv-fill" style={{ width: Math.min(100, (best / level.target) * 100) + "%" }} />
+      {isRec ? (
+        <div className="hv-goalrow">
+          <span className="hv-goal rec">Рекорд {Math.max(record || 0, runBest)}</span>
+          <div className="hv-bar" role="progressbar" aria-valuenow={runBest} aria-valuemax={level.ceiling}>
+            <div className="hv-fill" style={{ width: Math.min(100, (runBest / level.ceiling) * 100) + "%" }} />
+            {(level.marks || []).map((m) => (
+              <i key={m} className={"hv-mark" + (runBest >= m ? " hit" : "")} style={{ left: (m / level.ceiling) * 100 + "%" }} />
+            ))}
+          </div>
+          <span className="hv-count">{runBest} / {level.ceiling}</span>
         </div>
-        <span className="hv-count">{best} / {level.target}</span>
-      </div>
+      ) : (
+        <div className="hv-goalrow">
+          <span className="hv-goal">Цель ≥ {level.target}</span>
+          <div className="hv-bar" role="progressbar" aria-valuenow={best} aria-valuemax={level.target}>
+            <div className="hv-fill" style={{ width: Math.min(100, (best / level.target) * 100) + "%" }} />
+          </div>
+          <span className="hv-count">{best} / {level.target}</span>
+        </div>
+      )}
 
       {hasBudget ? (
         <div className={"hv-slack" + (slack <= 0 ? " tight" : "")}>
@@ -1177,6 +1276,31 @@ function Game({ level, onExit, onWin, onNext, hasNext }) {
           </div>
         )}
 
+        {phase === "done" && (
+          <div className="hv-overlay">
+            <div className="hv-card">
+              <div className="hv-stars">
+                {(level.marks || []).map((m, i) => (
+                  <Star key={m} size={34} className="hv-star" style={{ animationDelay: i * 0.12 + "s" }}
+                    fill={runBest >= m ? "#EFAF3C" : "none"} color={runBest >= m ? "#EFAF3C" : "#57685A"} />
+                ))}
+              </div>
+              <div className="hv-wontitle">{runBest > (record || 0) ? "Новый рекорд!" : "Партия окончена"}</div>
+              <div className="hv-wonsub">
+                Самая длинная змея: <b>{runBest}</b>
+                {level.proof === "beam" ? " · машина собирает " + level.ceiling : " из " + level.ceiling}
+                {runBest > (record || 0) ? "" : " · твой рекорд " + (record || 0)}
+              </div>
+              <div className="hv-btnrow">
+                <button className="hv-btn ghost" onClick={undo} disabled={!history.length}>
+                  <Undo2 size={15} /> Отменить ход
+                </button>
+                <button className="hv-btn main" onClick={restart}><RotateCcw size={15} /> Ещё раз</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {phase === "lost" && (
           <div className="hv-overlay">
             <div className="hv-card">
@@ -1203,7 +1327,10 @@ function Game({ level, onExit, onWin, onNext, hasNext }) {
         {toast ? (
           <div className="hv-toast">{toast}</div>
         ) : stuckMsg ? (
-          <div className="hv-toast warn">{stuckMsg}</div>
+          <div className="hv-toast warn">
+            {stuckMsg}
+            {isRec ? <button className="hv-endbtn" onClick={() => setPhase("done")}>Закончить</button> : null}
+          </div>
         ) : (
           <div className="hv-lesson">{level.lesson}</div>
         )}
@@ -1213,7 +1340,7 @@ function Game({ level, onExit, onWin, onNext, hasNext }) {
 }
 
 /* ---------- меню ---------- */
-function Menu({ stars, onPlay, packIdx, onPack }) {
+function Menu({ stars, records, onPlay, packIdx, onPack }) {
   const pack = PACKS[packIdx];
   return (
     <div className="hv-screen hv-menu">
@@ -1229,7 +1356,11 @@ function Menu({ stars, onPlay, packIdx, onPack }) {
         <li><b>Тапни змею.</b> Если она смотрит на чужой хвост — проглотит его целиком.</li>
         <li><b>Смотри, куда она смотрит.</b> Врежется в тело{pack.id === "void" ? "" : ", валун"} или голову — авария.</li>
         <li><b>Некого есть?</b> Выпусти змею с поля и расчисти дорогу. Но её длина пропадёт.</li>
-        <li><b>Цель:</b> хотя бы одна змея нужной длины. Неважно, какая.</li>
+        {pack.id === "record" ? (
+          <li><b>Цели нет.</b> Расти, пока есть кого есть. В зачёт идёт самая длинная змея за партию.</li>
+        ) : (
+          <li><b>Цель:</b> хотя бы одна змея нужной длины. Неважно, какая.</li>
+        )}
       </ul>
       <div className="hv-packs">
         {PACKS.map((p, i) => (
@@ -1240,26 +1371,34 @@ function Menu({ stars, onPlay, packIdx, onPack }) {
         ))}
       </div>
       <div className="hv-levels">
-        {pack.levels.map((lv) => (
-          <button key={lv.id} className="hv-lvcard" onClick={() => onPlay(lv.id)}>
-            <span className="hv-lvbig">{lv.id + 1}</span>
-            <span className="hv-lvinfo">
-              <span className="hv-lvtitle">{lv.name}</span>
-              <span className="hv-lvmeta">
-                {lv.w}×{lv.h} · цель ≥ {lv.target}
+        {pack.levels.map((lv) => {
+          const rec = records[pack.id + ":" + lv.id] || 0;
+          const got = lv.mode === "record"
+            ? (lv.marks || []).filter((m) => rec >= m).length
+            : (stars[pack.id + ":" + lv.id] || 0);
+          return (
+            <button key={lv.id} className="hv-lvcard" onClick={() => onPlay(lv.id)}>
+              <span className="hv-lvbig">{lv.mode === "record" ? "∞" : lv.id + 1}</span>
+              <span className="hv-lvinfo">
+                <span className="hv-lvtitle">{lv.name}</span>
+                <span className="hv-lvmeta">
+                  {lv.w}×{lv.h} · {lv.mode === "record"
+                    ? lv.snakes.length + " змей · рекорд " + rec + (lv.proof === "beam" ? ", машина " : " из ") + lv.ceiling
+                    : "цель ≥ " + lv.target}
+                </span>
               </span>
-            </span>
-            <span className="hv-lvstars">
-              {[0, 1, 2].map((i) => (
-                <Star key={i} size={14}
-                  fill={i < (stars[pack.id + ":" + lv.id] || 0) ? "#EFAF3C" : "none"}
-                  color={i < (stars[pack.id + ":" + lv.id] || 0) ? "#EFAF3C" : "#41544A"} />
-              ))}
-            </span>
-          </button>
-        ))}
+              <span className="hv-lvstars">
+                {[0, 1, 2].map((i) => (
+                  <Star key={i} size={14}
+                    fill={i < got ? "#EFAF3C" : "none"}
+                    color={i < got ? "#EFAF3C" : "#41544A"} />
+                ))}
+              </span>
+            </button>
+          );
+        })}
       </div>
-      <div className="hv-note">прототип · прогресс живёт до перезагрузки</div>
+      <div className="hv-note">прототип · звёзды живут до перезагрузки, рекорды — навсегда</div>
     </div>
   );
 }
@@ -1270,8 +1409,18 @@ export default function App() {
   const [packIdx, setPackIdx] = useState(0);
   const [idx, setIdx] = useState(0);
   const [stars, setStars] = useState({});
+  const [records, setRecords] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("hv-records") || "{}"); } catch (e) { return {}; }
+  });
   const pack = PACKS[packIdx];
   const levels = pack.levels;
+  const recKey = pack.id + ":" + idx;
+  const saveRecord = (len) => setRecords((p) => {
+    if ((p[recKey] || 0) >= len) return p;
+    const next = { ...p, [recKey]: len };
+    try { localStorage.setItem("hv-records", JSON.stringify(next)); } catch (e) {}
+    return next;
+  });
 
   return (
     <div className="hv-root">
@@ -1279,6 +1428,7 @@ export default function App() {
       {screen === "menu" ? (
         <Menu
           stars={stars}
+          records={records}
           packIdx={packIdx}
           onPack={(i) => { setPackIdx(i); setIdx(0); }}
           onPlay={(i) => { setIdx(i); setScreen("game"); }}
@@ -1287,6 +1437,8 @@ export default function App() {
         <Game
           key={pack.id + ":" + idx}
           level={levels[idx]}
+          record={records[recKey] || 0}
+          onRecord={saveRecord}
           onExit={() => setScreen("menu")}
           onWin={(st) => setStars((p) => {
             const k = pack.id + ":" + idx;
@@ -1320,7 +1472,12 @@ const CSS_TEXT = `
 
 .hv-goalrow{display:flex;align-items:center;gap:9px;margin-bottom:10px;}
 .hv-goal{font-size:12px;font-weight:800;color:#0F1A12;background:#EFAF3C;border-radius:9px;padding:4px 8px;white-space:nowrap;}
-.hv-bar{flex:1;height:12px;border-radius:8px;background:#243527;overflow:hidden;}
+.hv-bar{flex:1;height:12px;border-radius:8px;background:#243527;overflow:hidden;position:relative;}
+.hv-goal.rec{background:#58A942;color:#08120A;}
+.hv-mark{position:absolute;top:0;width:2px;height:100%;background:#0F1A12;opacity:.55;transform:translateX(-1px);}
+.hv-mark.hit{background:#FFFDF4;opacity:.75;}
+.hv-endbtn{margin-left:10px;font:inherit;font-weight:800;color:#0F1A12;background:#EFAF3C;
+  border:0;border-radius:8px;padding:3px 10px;cursor:pointer;}
 .hv-fill{height:100%;border-radius:8px;background:linear-gradient(90deg,#58A942,#9CCB3B);transition:width .35s ease;}
 .hv-count{font-size:13px;font-weight:600;color:#B9C8B4;min-width:52px;text-align:right;font-variant-numeric:tabular-nums;}
 .hv-slack{font-size:12px;color:#9FB29B;background:#1B2A1F;border:1px solid #2C3E30;border-radius:10px;
