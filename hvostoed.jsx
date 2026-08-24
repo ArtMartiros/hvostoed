@@ -2061,35 +2061,8 @@ function CraftModal({ base, cfg, onSet, onClose, onGo, onReset, busy, fail }) {
   );
 }
 
-/* Правила показываются один раз при первом запуске и потом только по «?».
-   Читают их ровно ноль раз после первого — значит и места на главной занимать
-   не должны. */
-function Rules({ pack, onClose }) {
-  return (
-    <div className="hv-overlay hv-modal" onClick={onClose}>
-      <div className="hv-card hv-cfg" onClick={(e) => e.stopPropagation()}>
-        <div className="hv-cfgtop">
-          <span className="hv-cfgttl">Как играть</span>
-          <button className="hv-mini" onClick={onClose} aria-label="Закрыть"><X size={16} /></button>
-        </div>
-        <ul className="hv-rules">
-          <li><b>Тапни змею.</b> Если она смотрит на чужой хвост — проглотит его целиком.</li>
-          <li><b>Смотри, куда она смотрит.</b> Врежется в тело{pack.id === "void" ? "" : ", валун"} или голову — авария.</li>
-          <li><b>Некого есть?</b> Выпусти змею с поля и расчисти дорогу. Но её длина пропадёт.</li>
-          {pack.id === "record" ? (
-            <li><b>Цели нет.</b> Расти, пока есть кого есть. В зачёт идёт самая длинная змея за партию.</li>
-          ) : (
-            <li><b>Цель:</b> хотя бы одна змея нужной длины. Неважно, какая.</li>
-          )}
-        </ul>
-        <button className="hv-btn" onClick={onClose}>Понятно</button>
-      </div>
-    </div>
-  );
-}
-
 /* ---------- меню ---------- */
-function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft, onDrop, busy, note, onRules, inbox, onDump, onClearInbox }) {
+function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft, onDrop, busy, note, inbox, onDump, onClearInbox }) {
   const pack = packs[packIdx];
   return (
     <div className="hv-screen hv-menu">
@@ -2100,7 +2073,6 @@ function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft
         <circle cx="196" cy="14" r="8" fill="#58A942" />
         <circle cx="199" cy="11" r="2" fill="#152118" />
       </svg>
-      <button className="hv-help" onClick={() => onRules(true)} aria-label="Правила">?</button>
       <div className="hv-packs">
         {packs.map((p, i) => (
           <button key={p.id} className={"hv-pack" + (i === packIdx ? " hv-pack-on" : "")} onClick={() => onPack(i)}>
@@ -2200,15 +2172,6 @@ export default function App() {
   const [inbox, setInbox] = useState(() => {
     try { return JSON.parse(localStorage.getItem("hv-inbox") || "[]"); } catch (e) { return []; }
   });
-  // Правила на главной больше не висят: тому, кто их прочёл, они не нужны ни разу.
-  // Но первому встречному нужны, поэтому один раз показываем сами.
-  const [rules, setRules] = useState(() => {
-    try { return !localStorage.getItem("hv-seen"); } catch (e) { return true; }
-  });
-  const closeRules = () => {
-    setRules(false);
-    try { localStorage.setItem("hv-seen", "1"); } catch (e) {}
-  };
 
   const cfgOf = (name) => ({ ...PRESETS[name], ...(craftCfgs[name] || {}) });
   const setCfg = (name, upd) => {
@@ -2358,7 +2321,6 @@ export default function App() {
           onGo={{ run: () => craft(craftOpen, cfgOf(craftOpen)), cancel: () => { abortRef.current = true; } }}
         />
       ) : null}
-      {rules ? <Rules pack={pack} onClose={closeRules} /> : null}
       {screen === "menu" ? (
         <Menu
           packs={packs}
@@ -2372,7 +2334,6 @@ export default function App() {
           onDrop={onDrop}
           onPack={(i) => { setPackIdx(i); setIdx(0); setNote(null); }}
           onPlay={(i) => { setIdx(i); setScreen("game"); }}
-          onRules={() => setRules(true)}
           inbox={inbox.length}
           onDump={dumpInbox}
           onClearInbox={clearInbox}
@@ -2398,8 +2359,33 @@ export default function App() {
 }
 
 /* ---------- стили ---------- */
+/* Шрифты лежат в репозитории, а не тянутся у Google. Иначе без сети игра теряет
+   всю типографику, а с сетью платит лишним запросом при каждой загрузке.
+   Только кириллица и латиница: остальные подмножества (арабица, иврит,
+   вьетнамский) игре не нужны. Rubik и Unbounded — переменные шрифты, поэтому
+   на все начертания приходится по одному файлу на подмножество, всего четыре. */
+const BASE = import.meta.env && import.meta.env.BASE_URL ? import.meta.env.BASE_URL : "/";
 const CSS_TEXT = `
-@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@500;800&family=Rubik:wght@400;600;800&display=swap');
+@font-face{font-family:'Rubik';font-style:normal;font-weight:400;font-display:swap;
+  src:url("${BASE}fonts/rubik-cyrillic.woff2") format("woff2");unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;}
+@font-face{font-family:'Rubik';font-style:normal;font-weight:400;font-display:swap;
+  src:url("${BASE}fonts/rubik-latin.woff2") format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;}
+@font-face{font-family:'Rubik';font-style:normal;font-weight:600;font-display:swap;
+  src:url("${BASE}fonts/rubik-cyrillic.woff2") format("woff2");unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;}
+@font-face{font-family:'Rubik';font-style:normal;font-weight:600;font-display:swap;
+  src:url("${BASE}fonts/rubik-latin.woff2") format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;}
+@font-face{font-family:'Rubik';font-style:normal;font-weight:800;font-display:swap;
+  src:url("${BASE}fonts/rubik-cyrillic.woff2") format("woff2");unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;}
+@font-face{font-family:'Rubik';font-style:normal;font-weight:800;font-display:swap;
+  src:url("${BASE}fonts/rubik-latin.woff2") format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;}
+@font-face{font-family:'Unbounded';font-style:normal;font-weight:500;font-display:swap;
+  src:url("${BASE}fonts/unbounded-cyrillic.woff2") format("woff2");unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;}
+@font-face{font-family:'Unbounded';font-style:normal;font-weight:500;font-display:swap;
+  src:url("${BASE}fonts/unbounded-latin.woff2") format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;}
+@font-face{font-family:'Unbounded';font-style:normal;font-weight:800;font-display:swap;
+  src:url("${BASE}fonts/unbounded-cyrillic.woff2") format("woff2");unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;}
+@font-face{font-family:'Unbounded';font-style:normal;font-weight:800;font-display:swap;
+  src:url("${BASE}fonts/unbounded-latin.woff2") format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;}
 
 /* Без этого на айфоне по краям белое: у body свои отступы по умолчанию, а за
    безопасными зонами и при оттяжке страницы Safari красит холст фоном html. */
@@ -2549,14 +2535,6 @@ body{overflow-x:hidden;-webkit-text-size-adjust:100%;}
 .hv-inbox{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;
   margin-top:12px;padding:10px 12px;border:1px dashed #3C5A44;border-radius:14px;
   font-size:12.5px;color:#9FB29B;}
-.hv-help{position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:50%;
-  background:#1B2A1F;border:1px solid #35503C;color:#8AA089;font:600 15px Rubik,sans-serif;
-  cursor:pointer;padding:0;}
-.hv-rules{list-style:none;margin:2px 0 16px;padding:0;display:flex;flex-direction:column;gap:8px;width:100%;
-  text-align:left;}
-.hv-rules li{font-size:13.5px;line-height:1.45;color:#C9D6C2;background:#1B2A1F;border:1px solid #2C3E30;
-  border-radius:14px;padding:10px 13px;}
-.hv-rules b{color:#F3F0E4;}
 /* Вкладок больше, чем влезает в телефон. Лента прокручивается сама и выходит за
    отступы экрана — режется по краю стекла, а не по полю, — иначе горизонтально
    ползала вся страница. */
