@@ -61,7 +61,8 @@ export function raycast(state, i, w, h) {
     const hit = occ.get(ck(c));
     if (hit) {
       if (hit.si === i) return { kind: 'self', gap };
-      if (hit.ci === hit.len - 1) return { kind: 'tail', prey: hit.si, gap };
+      if (hit.ci === hit.len - 1)
+        return state[hit.si].spiky ? { kind: 'spikyTail', gap } : { kind: 'tail', prey: hit.si, gap };
       return { kind: 'block', gap };
     }
     gap++; c = add(c, d);
@@ -84,6 +85,7 @@ export function applyEat(state, i, ray) {
 export function movesOf(state, w, h) {
   const out = [];
   for (let i = 0; i < state.length; i++) {
+    if (state[i].sleep) continue;          // спящая не ходит, но её едят
     const r = raycast(state, i, w, h);
     if (r.kind === 'tail') out.push({ i, eat: true, prey: r.prey, gap: r.gap, ray: r });
     else if (r.kind === 'edge') out.push({ i, eat: false, gap: r.gap, ray: r });
@@ -269,13 +271,20 @@ export function generate(cfg) {
   }
   if (moves.length < cfg.minMoves) return null;
 
-  // обманки: только на клетках, которые решению не нужны ни разу
+  /* Обманки: только на клетках, которые решению не нужны ни разу. Часть из них
+     помечается — колючая ходит, но её хвост не съесть; спящая наоборот, съедобна,
+     но сама не ходит. Обе никогда не участвуют в решении, поэтому пометка не может
+     его сломать: она лишь меняет, чем обманка соблазняет. Совмещать не даём —
+     колючая соня была бы просто валуном в форме змеи. */
   const decoys = [];
   for (let t = 0; t < cfg.decoys; t++) {
     const len = 2 + Math.floor(rnd() * (cfg.decoyMax || 4));
     const d = walk(rnd, cfg.w, cfg.h, len, forbidden, null, null, 0.4);
     if (!d) continue;
-    decoys.push({ id: cfg._nextId++, cells: d, decoy: true });
+    const mark = {};
+    if (decoys.filter((q) => q.spiky).length < (cfg.spiky || 0)) mark.spiky = true;
+    else if (decoys.filter((q) => q.sleep).length < (cfg.sleepy || 0)) mark.sleep = true;
+    decoys.push({ id: cfg._nextId++, cells: d, decoy: true, ...mark });
     for (const c of d) forbidden.add(ck(c));
   }
   state = state.concat(decoys);

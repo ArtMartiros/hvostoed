@@ -21,6 +21,7 @@ const COLORS = {
   teal:   { fill: "#23B5A3", dark: "#0F8375", nom: "бирюзовая",  gen: "бирюзовой" },
   red:    { fill: "#E05548", dark: "#A93327", nom: "красная",    gen: "красной" },
   spiky:  { fill: "#8A9163", dark: "#535A33", nom: "колючая",    gen: "колючей" },
+  sleepy: { fill: "#7E8BA3", dark: "#4E5970", nom: "спящая",     gen: "спящей" },
 };
 const ORDER = ["green", "blue", "orange", "plum", "pink", "teal", "red"];
 
@@ -689,6 +690,7 @@ const paintPack = (lv) => {
   let ci = 0;
   lv.snakes.forEach((s, si) => {
     if (s.spiky) { colors[si] = "spiky"; return; }
+    if (s.sleep) { colors[si] = "sleepy"; return; }
     const taken = new Set([...near[si]].map((o) => colors[o]).filter(Boolean));
     for (let k = 0; k < ORDER.length; k++) {
       const c = ORDER[(ci + k) % ORDER.length];
@@ -732,12 +734,14 @@ const ходов = (n) => n + " " + plural(n, "ход", "хода", "ходов"
 const клеток = (n) => n + " " + plural(n, "клетка", "клетки", "клеток");
 const уровней = (n) => n + " " + plural(n, "уровень", "уровня", "уровней");
 
-const withIds = (snakes) => snakes.map((s, i) => ({ id: "s" + i, cells: s.cells.map((c) => c.slice()) }));
+const withIds = (snakes) => snakes.map((s, i) =>
+  ({ id: "s" + i, spiky: !!s.spiky, sleep: !!s.sleep, cells: s.cells.map((c) => c.slice()) }));
 const NOROCKS = new Set();
 
 function acceptCrafted(name, r, ordinal) {
   const lv = r.level, m = r.metrics;
-  const snakes = lv.snakes.map((s) => ({ cells: s.cells.map((c) => c.slice()) }));
+  const snakes = lv.snakes.map((s) =>
+    ({ cells: s.cells.map((c) => c.slice()), ...(s.spiky ? { spiky: true } : {}), ...(s.sleep ? { sleep: true } : {}) }));
   const base = { w: lv.w, h: lv.h, snakes, preset: name, seed: r.seed,
                  name: name.charAt(0).toUpperCase() + name.slice(1) + " " + ordinal };
   if (r.record) {
@@ -753,22 +757,28 @@ function acceptCrafted(name, r, ordinal) {
   const plan = planGoal({ w: lv.w, h: lv.h, target }, withIds(snakes), NOROCKS);
   if (!plan) return null;
   if (plan.length < lv.moves.length) return null;   // игра нашла путь короче задуманного
+  const marks = [];
+  if (snakes.some((s) => s.spiky)) marks.push("колючую не съесть");
+  if (snakes.some((s) => s.sleep)) marks.push("спящая не ходит");
   return { ...base, mode: "goal", target,
-    lesson: `Цель ${target} за ${ходов(plan.length)} · решений ${m.sols} · безопасных тапов ${Math.round(100 * m.safety)}%` };
+    lesson: `Цель ${target} за ${ходов(plan.length)} · решений ${m.sols} · безопасных тапов ${Math.round(100 * m.safety)}%`
+      + (marks.length ? " · " + marks.join(", ") : "") };
 }
 
 const craftedToLevel = (c, i) => {
   const raw = { ...c, rocks: [] };
   const colors = paintPack(raw);
   return { ...raw, id: i, rocks: [],
-    snakes: c.snakes.map((sn, si) => ({ id: "s" + si, color: colors[si], spiky: false, cells: sn.cells })) };
+    snakes: c.snakes.map((sn, si) =>
+      ({ id: "s" + si, color: colors[si], spiky: !!sn.spiky, sleep: !!sn.sleep, cells: sn.cells })) };
 };
 
 const craftedToText = (c) => `  {
     name: ${JSON.stringify(c.name)}, lesson: ${JSON.stringify(c.lesson)},
     w: ${c.w}, h: ${c.h}, ${c.mode === "record" ? `ceiling: ${c.ceiling}, proof: "beam", mass: ${c.mass}, marks: ${JSON.stringify(c.marks)}` : `target: ${c.target}`},
     snakes: [
-${c.snakes.map((sn) => "      { cells: [" + sn.cells.map(([x, y]) => `[${x}, ${y}]`).join(", ") + "] },").join("\n")}
+${c.snakes.map((sn) => "      { " + (sn.spiky ? "spiky: true, " : "") + (sn.sleep ? "sleep: true, " : "") +
+    "cells: [" + sn.cells.map(([x, y]) => `[${x}, ${y}]`).join(", ") + "] },").join("\n")}
     ],
   },   // пресет ${c.preset}, сид ${c.seed}`;
 
@@ -844,6 +854,7 @@ const stateKey = (snakes) =>
 function legalMoves(snakes, W, H, rockSet) {
   const out = [];
   for (const s of snakes) {
+    if (s.sleep) continue;               // спящая не ходит, но её едят
     const ray = raycast(snakes, s.id, W, H, rockSet);
     if (ray.kind === "tail") out.push({ sid: s.id, next: applyEat(snakes, s.id, ray) });
     else if (ray.kind === "edge") out.push({ sid: s.id, next: snakes.filter((q) => q.id !== s.id) });
@@ -1097,11 +1108,21 @@ function SnakeView({ snake, shaking, onTap, regRef }) {
       <g data-part="headG" transform={"translate(" + head[0].toFixed(1) + " " + head[1].toFixed(1) + ")"}>
         <circle data-part="headCircle" r="43" fill={C.fill} stroke={C.dark} strokeWidth="7" />
         <g data-part="rotG" transform={"rotate(" + angle.toFixed(1) + ")"}>
-          <path className="hv-tongue" d="M43 0 L61 8 M43 0 L61 -8" stroke="#D9382B" strokeWidth="6" strokeLinecap="round" fill="none" />
-          <circle cx="17" cy="-15" r="9.5" fill="#FFFDF4" />
-          <circle cx="17" cy="15" r="9.5" fill="#FFFDF4" />
-          <circle cx="21" cy="-15" r="4.5" fill="#1E2A1D" />
-          <circle cx="21" cy="15" r="4.5" fill="#1E2A1D" />
+          {snake.sleep ? (
+            // спящая: закрытые глаза вместо зрачков и без языка — видно, что она не в игре
+            <>
+              <path d="M9 -15 A11 11 0 0 0 25 -15" stroke="#1E2A1D" strokeWidth="4.5" strokeLinecap="round" fill="none" />
+              <path d="M9 15 A11 11 0 0 0 25 15" stroke="#1E2A1D" strokeWidth="4.5" strokeLinecap="round" fill="none" />
+            </>
+          ) : (
+            <>
+              <path className="hv-tongue" d="M43 0 L61 8 M43 0 L61 -8" stroke="#D9382B" strokeWidth="6" strokeLinecap="round" fill="none" />
+              <circle cx="17" cy="-15" r="9.5" fill="#FFFDF4" />
+              <circle cx="17" cy="15" r="9.5" fill="#FFFDF4" />
+              <circle cx="21" cy="-15" r="4.5" fill="#1E2A1D" />
+              <circle cx="21" cy="15" r="4.5" fill="#1E2A1D" />
+            </>
+          )}
         </g>
         <text data-part="num" textAnchor="middle" dominantBaseline="central"
           fontFamily="Rubik, sans-serif" fontWeight="800" fontSize="30" fill="#FFFDF4"
@@ -1179,8 +1200,8 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
   const hasBudget = !isRec && level.snakes.reduce((a, s) => a + s.cells.length, 0) > level.target;
   const slack = onBoard - level.target;
   const idle = phase === "idle";
-  const canEatAny = idle && snakes.some((s) => raycast(snakes, s.id, level.w, level.h, rockSet).kind === "tail");
-  const canLaunchAny = idle && snakes.some((s) => raycast(snakes, s.id, level.w, level.h, rockSet).kind === "edge");
+  const canEatAny = idle && snakes.some((s) => !s.sleep && raycast(snakes, s.id, level.w, level.h, rockSet).kind === "tail");
+  const canLaunchAny = idle && snakes.some((s) => !s.sleep && raycast(snakes, s.id, level.w, level.h, rockSet).kind === "edge");
 
   function showFx(next, ms) {
     clearTimeout(fxTimerRef.current);
@@ -1201,7 +1222,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
     const ml = maxLen(mv.finalSnakes);
     if (ml > runBest) { setRunBest(ml); if (isRec && hintsRef.current === 0) onRecord(ml); }
     // Цель — порог, а не финиш: пока змея может расти, партия продолжается.
-    const anyEat = mv.finalSnakes.some((s) => raycast(mv.finalSnakes, s.id, level.w, level.h, rockSet).kind === "tail");
+    const anyEat = mv.finalSnakes.some((s) => !s.sleep && raycast(mv.finalSnakes, s.id, level.w, level.h, rockSet).kind === "tail");
     if (!anyEat && !canGrow(level, mv.finalSnakes, rockSet, ml)) {
       finish(mv.finalSnakes, ml, mv.launchedAfter);
       return;
@@ -1330,8 +1351,9 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
   function tapSnake(sid) {
     if (phase !== "idle") return;
     setToast(null); setFx(null);
-    const ray = raycast(snakes, sid, level.w, level.h, rockSet);
     const s = snakes.find((q) => q.id === sid);
+    if (s.sleep) { setToast("Спящая змея не ходит — её можно только съесть."); return; }
+    const ray = raycast(snakes, sid, level.w, level.h, rockSet);
     const nom = COLORS[s.color].nom;
     const Nom = nom.charAt(0).toUpperCase() + nom.slice(1);
     if (ray.kind === "tail") {
@@ -1599,6 +1621,8 @@ const CRAFT_KNOBS = [
   // длина всегда равна цели — отсюда жёсткий предел на число ходов
   { k: "moves",  nom: "Ходов в решении", min: 2, max: (c) => Math.max(2, Math.min(16, Math.floor(c.len / 2) - 1)) },
   { k: "decoys", nom: "Обманок",        min: 0, max: 10 },
+  { k: "spiky",  nom: "из них колючих",  min: 0, max: (c) => c.decoys, sub: true },
+  { k: "sleepy", nom: "из них спящих",   min: 0, max: (c) => Math.max(0, c.decoys - (c.spiky || 0)), sub: true },
 ];
 /* Разбор отказов человеческим языком: приёмка возвращает имя метрики, а игроку
    нужно знать, какую ручку отпустить. */
@@ -1625,9 +1649,9 @@ const RESTS = [{ v: 2, nom: "через ход" }, { v: 3, nom: "каждый 3-
 
 /* Степпер отдаёт СДВИГ, а не готовое значение: два быстрых тапа попадают в один
    пакет обновлений React и оба посчитались бы от одного и того же старого числа. */
-function Stepper({ nom, value, min, max, onStep, hint }) {
+function Stepper({ nom, value, min, max, onStep, hint, sub }) {
   return (
-    <div className="hv-knob">
+    <div className={"hv-knob" + (sub ? " sub" : "")}>
       <span className="hv-knobnom">{nom}{hint ? <i className="hv-knobhint">{hint}</i> : null}</span>
       <span className="hv-step">
         <button className="hv-stepb" disabled={value <= min} onClick={() => onStep(-1)}>−</button>
@@ -1647,7 +1671,7 @@ function CraftModal({ base, cfg, onSet, onClose, onGo, onReset, busy, fail }) {
   const clamp = (c) => {
     const q = CRAFT_KNOBS.reduce((a, k) => {
       const hi = typeof k.max === "function" ? k.max(a) : k.max;
-      return { ...a, [k.k]: Math.max(k.min, Math.min(hi, a[k.k])) };
+      return { ...a, [k.k]: Math.max(k.min, Math.min(hi, a[k.k] || 0)) };
     }, c);
     q.voids = Math.max(0, Math.min(q.voids, Math.max(4, Math.round(voidCeiling(q) * 1.3))));
     return q;
@@ -1655,7 +1679,7 @@ function CraftModal({ base, cfg, onSet, onClose, onGo, onReset, busy, fail }) {
   const set = (k) => (v) => onSet((prev) => clamp({ ...prev, [k]: v }));
   const step = (k) => (d) => onSet((prev) => clamp({ ...prev, [k]: prev[k] + d }));
   return (
-    <div className="hv-overlay" onClick={busy ? undefined : onClose}>
+    <div className="hv-overlay hv-modal" onClick={busy ? undefined : onClose}>
       <div className="hv-card hv-cfg" onClick={(e) => e.stopPropagation()}>
         <div className="hv-cfgtop">
           <span className="hv-cfgttl">Настройка «{base}»</span>
@@ -1663,7 +1687,7 @@ function CraftModal({ base, cfg, onSet, onClose, onGo, onReset, busy, fail }) {
         </div>
 
         {CRAFT_KNOBS.map((q) => (
-          <Stepper key={q.k} nom={q.nom} min={q.min} value={cfg[q.k]} onStep={step(q.k)}
+          <Stepper key={q.k} nom={q.nom} min={q.min} value={cfg[q.k] || 0} onStep={step(q.k)} sub={q.sub}
             max={typeof q.max === "function" ? q.max(cfg) : q.max}
             hint={q.k === "len" && тесно ? тесно : null} />
         ))}
@@ -1843,7 +1867,7 @@ export default function App() {
       const cur = { ...PRESETS[name], ...(prev[name] || {}) };
       const got = typeof upd === "function" ? upd(cur) : upd;
       const keep = {};
-      for (const k of ["w", "h", "len", "moves", "decoys", "voids", "peak", "breather"]) keep[k] = got[k];
+      for (const k of ["w", "h", "len", "moves", "decoys", "spiky", "sleepy", "voids", "peak", "breather"]) keep[k] = got[k];
       const next = { ...prev, [name]: keep };
       try { localStorage.setItem("hv-craftcfg", JSON.stringify(next)); } catch (e) {}
       return next;
@@ -2039,12 +2063,19 @@ body{overflow-x:hidden;-webkit-text-size-adjust:100%;}
 .hv-shopempty{font-size:12px;color:#8C9E88;padding:10px 2px;}
 /* Настройка генератора. На телефоне ряд «название — значение» читается лучше
    таблицы, поэтому каждая ручка — своя строка, а не сетка. */
-.hv-card.hv-cfg{text-align:left;max-height:86vh;overflow-y:auto;width:100%;}
+/* Модалка живёт поверх всего экрана, а не внутри поля, — отсюда fixed вместо
+   absolute. z-index на карточке обязателен: ползунок заводит собственный слой
+   композитинга, и без него сквозь его строку просвечивал размытый фон подложки. */
+.hv-overlay.hv-modal{position:fixed;padding:12px;z-index:20;}
+.hv-card.hv-cfg{position:relative;z-index:1;text-align:left;max-height:86vh;overflow-y:auto;
+  width:min(100%,360px);}
 .hv-cfgtop{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;}
 .hv-cfgttl{font-family:Unbounded,Rubik,sans-serif;font-weight:500;font-size:15px;color:#F3F0E4;}
 .hv-knob{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;
   border-top:1px solid #24352A;}
 .hv-knob.col{flex-direction:column;align-items:stretch;gap:7px;}
+.hv-knob.sub{border-top:none;padding:2px 0 4px 14px;}
+.hv-knob.sub .hv-knobnom{font-size:12px;color:#8AA089;}
 .hv-knobnom{font-size:13px;color:#C9D6C2;display:flex;flex-direction:column;gap:1px;}
 .hv-knobhint{font-style:normal;font-size:10.5px;color:#8AA089;}
 .hv-step{display:flex;align-items:center;gap:4px;flex:0 0 auto;}

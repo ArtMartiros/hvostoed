@@ -1,4 +1,4 @@
-// Солвер «Хвостоеда» v2: валуны (rocks), колючие змеи (spiky), лимит ходов (moves)
+// Солвер «Хвостоеда» v3: валуны (rocks), колючие (spiky), спящие (sleep), лимит ходов (moves)
 // Использование: node solver.js /путь/к/hvostoed.jsx
 import fs from 'fs';
 
@@ -61,7 +61,7 @@ function applyEat(snakes, i, ray) {
   return out;
 }
 
-const key = (s) => s.map((x) => (x.spiky ? '!' : '') + x.cells.map((c) => c.join('.')).join(';')).sort().join('|');
+const key = (s) => s.map((x) => (x.spiky ? '!' : '') + (x.sleep ? 'z' : '') + x.cells.map((c) => c.join('.')).join(';')).sort().join('|');
 const maxLen = (s) => Math.max(0, ...s.map((x) => x.cells.length));
 
 // Полный перебор с метриками. moveCap: ограничение длины решения (null = без лимита)
@@ -85,13 +85,14 @@ function solve(lv, { allowLaunch, moveCap }) {
     seen.add(k);
     if (sols >= CAP) return;
     for (let i = 0; i < snakes.length; i++) {
+      if (snakes[i].sleep) continue;          // спящая не ходит, но её едят
       const r = raycast(snakes, i, W, H, rockSet);
       if (r.kind === 'tail') dfs(applyEat(snakes, i, r), depth + 1, seq.concat(['eat s' + i + '>s' + r.target]));
       else if (r.kind === 'edge' && allowLaunch) dfs(snakes.filter((_, si) => si !== i), depth + 1, seq.concat(['launch s' + i]));
       if (sols >= CAP) return;
     }
   }
-  dfs(lv.snakes.map((s) => ({ cells: s.cells, spiky: !!s.spiky })), 0, []);
+  dfs(lv.snakes.map((s) => ({ cells: s.cells, spiky: !!s.spiky, sleep: !!s.sleep })), 0, []);
   return { best, sols, minMoves: sols ? minMoves : null, bestSeq };
 }
 

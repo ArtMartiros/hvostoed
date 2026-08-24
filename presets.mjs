@@ -13,23 +13,23 @@ import * as S from './levelstats.mjs';
 
 export const PRESETS = {
   ученик:   { w: 7,  h: 7,  len: 14, moves: 4,  maxGap: 3, voids: 5,  peak: 1, breather: 3, straightBias: 0.7,
-              decoys: 2, decoyMax: 3,
+              decoys: 2, spiky: 0, sleepy: 0, decoyMax: 3,
               min: { decoyLive: 1, safety: 0.75, sols: 2, branch: 2 },
               max: { branch: 5, voidMiss: 2, runMax: 3 } },
   средний:  { w: 9,  h: 9,  len: 22, moves: 6,  maxGap: 4, voids: 9,  peak: 1, breather: 3, straightBias: 0.7,
-              decoys: 3, decoyMax: 4,
+              decoys: 3, spiky: 1, sleepy: 0, decoyMax: 4,
               min: { decoyLive: 1, safety: 0.65, sols: 3, branch: 2.5, farShare: 0.5 },
               max: { branch: 6, voidMiss: 3, runMax: 3 } },
   длинный:  { w: 10, h: 11, len: 34, moves: 9,  maxGap: 5, voids: 14, peak: 1, breather: 3, straightBias: 0.8,
-              decoys: 4, decoyMax: 5,
+              decoys: 4, spiky: 1, sleepy: 1, decoyMax: 5,
               min: { decoyLive: 0.75, safety: 0.6, sols: 3, branch: 3, farShare: 0.5 },
               max: { branch: 7, voidMiss: 4, runMax: 3 } },
   пустоты:  { w: 10, h: 11, len: 30, moves: 8,  maxGap: 5, voids: 16, peak: 1, breather: 3, straightBias: 0.85,
-              decoys: 5, decoyMax: 4,
+              decoys: 5, spiky: 1, sleepy: 1, decoyMax: 4,
               min: { decoyLive: 0.75, safety: 0.6, sols: 2, branch: 2.5, farShare: 0.7, avgGap: 1.3 },
               max: { branch: 7, voidMiss: 4, runMax: 3 } },
   простор:  { w: 12, h: 16, len: 52, moves: 13, maxGap: 5, voids: 26, peak: 1, breather: 3, straightBias: 0.8,
-              decoys: 8, decoyMax: 5, record: true,
+              decoys: 8, spiky: 2, sleepy: 2, decoyMax: 5, record: true,
               min: { decoyLive: 0.6, branch: 3, farShare: 0.6, avgGap: 1.2, alive: 0.2 },
               max: { branch: 8, alive: 0.65, voidMiss: 6, runMax: 3 } },
 };
@@ -134,7 +134,7 @@ export function craftOnce(preset, seed) {
   if (m.shortcut) return { fail: 'есть решение короче задуманного' };
   const bad = checkSome(p, m, false);
   if (bad.length) return { fail: bad.join(', ') };
-  return { level: lv, metrics: m, preset: name, seed, record: !!p.record };
+  return { level: lv, metrics: m, preset, seed, record: !!p.record };
 }
 
 export function craft(preset, seed0, budget) {
