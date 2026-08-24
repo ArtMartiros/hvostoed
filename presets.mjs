@@ -105,11 +105,24 @@ function checkSome(p, m, cheapOnly) {
   return fail;
 }
 
-/* Одна попытка. Кнопка на телефоне крутит их по одной, отдавая управление
-   интерфейсу между попытками, — иначе экран замирает на секунды. */
-export function craftOnce(name, seed) {
-  const p = PRESETS[name];
-  if (!p) throw new Error('нет пресета ' + name);
+/* Надёжный предел бюджета пустот для данной пары «цель + ходов».
+   Разрез с зазором k требует змеи длиной ≥ k+3, а к концу обратной прогулки куски
+   короткие — отсюда потолок. Формула откалибрована по замерам: ученик 7, средний 11,
+   длинный 17, пустоты 15, простор 25 против реально достижимых 7/12/18/21/32.
+   Это НАДЁЖНЫЙ предел, а не абсолютный: выше него выход резко падает, но не ноль. */
+export function voidCeiling(p) {
+  const rest = p.breather > 0 ? Math.max(0, Math.ceil((p.moves - 2) / p.breather)) : 0;
+  const slots = Math.max(1, p.moves - rest);
+  return Math.max(0, Math.round(Math.min(0.5 * p.len, 1.9 * p.moves, p.maxGap * slots)));
+}
+
+/* Одна попытка. Первым аргументом либо имя пресета, либо готовый конфиг из модалки
+   (пресет тогда служит заготовкой — от него достаются коридоры приёмки).
+   Кнопка на телефоне крутит попытки по одной, отдавая управление интерфейсу
+   между ними, — иначе экран замирает на секунды. */
+export function craftOnce(preset, seed) {
+  const p = typeof preset === 'string' ? PRESETS[preset] : preset;
+  if (!p) throw new Error('нет пресета ' + preset);
   const lv = G.generate({ ...p, seed, minMoves: p.moves });
   if (!lv) return { fail: 'не собралось' };
   const v = G.verify(lv);
@@ -124,10 +137,10 @@ export function craftOnce(name, seed) {
   return { level: lv, metrics: m, preset: name, seed, record: !!p.record };
 }
 
-export function craft(name, seed0, budget) {
+export function craft(preset, seed0, budget) {
   const why = {};
   for (let t = 0; t < (budget || 60); t++) {
-    const r = craftOnce(name, (seed0 || 1) + t);
+    const r = craftOnce(preset, (seed0 || 1) + t);
     if (r.level) return { ...r, attempts: t + 1, why };
     const tag = r.fail.split(/[,:]/)[0];
     why[tag] = (why[tag] || 0) + 1;

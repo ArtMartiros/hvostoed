@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Undo2, RotateCcw, Star, Play, Lightbulb, Wand2, Copy, Trash2 } from "lucide-react";
-import { PRESETS, craftOnce } from "./presets.mjs";
+import { ChevronLeft, Undo2, RotateCcw, Star, Play, Lightbulb, Wand2, Copy, Trash2, X, Sliders } from "lucide-react";
+import { PRESETS, craftOnce, voidCeiling } from "./presets.mjs";
 
 /* ================================================================
    ХВОСТОЕД — прототип v3
@@ -721,6 +721,17 @@ const buildPack = (raw, mode) =>
    игры: тем же планировщиком, что стоит за лампочкой. Для целевого уровня план
    обязан существовать и не быть короче задуманного (иначе где-то срез), для поля
    рекорда потолком объявляется то, что игра реально сумела собрать. */
+// «за 4 хода», а не «за 4 ходов»
+const plural = (n, one, few, many) => {
+  const d = n % 10, dd = n % 100;
+  if (d === 1 && dd !== 11) return one;
+  if (d >= 2 && d <= 4 && (dd < 12 || dd > 14)) return few;
+  return many;
+};
+const ходов = (n) => n + " " + plural(n, "ход", "хода", "ходов");
+const клеток = (n) => n + " " + plural(n, "клетка", "клетки", "клеток");
+const уровней = (n) => n + " " + plural(n, "уровень", "уровня", "уровней");
+
 const withIds = (snakes) => snakes.map((s, i) => ({ id: "s" + i, cells: s.cells.map((c) => c.slice()) }));
 const NOROCKS = new Set();
 
@@ -736,14 +747,14 @@ function acceptCrafted(name, r, ordinal) {
     if (got.broken || got.len < 2) return null;
     return { ...base, mode: "record", ceiling: got.len, proof: "beam", mass: m.mass,
       marks: [Math.round(got.len * 0.5), Math.round(got.len * 0.75), got.len],
-      lesson: `${m.snakes} змей · ${m.mass} клеток · игра собирает ${got.len} за ${got.steps} ходов` };
+      lesson: `${m.snakes} змей · ${клеток(m.mass)} · игра собирает ${got.len} за ${ходов(got.steps)}` };
   }
   const target = lv.len;
   const plan = planGoal({ w: lv.w, h: lv.h, target }, withIds(snakes), NOROCKS);
   if (!plan) return null;
   if (plan.length < lv.moves.length) return null;   // игра нашла путь короче задуманного
   return { ...base, mode: "goal", target,
-    lesson: `Цель ${target} за ${plan.length} ходов · решений ${m.sols} · безопасных тапов ${Math.round(100 * m.safety)}%` };
+    lesson: `Цель ${target} за ${ходов(plan.length)} · решений ${m.sols} · безопасных тапов ${Math.round(100 * m.safety)}%` };
 }
 
 const craftedToLevel = (c, i) => {
@@ -1571,6 +1582,148 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
   );
 }
 
+/* ---------- настройка генератора ----------
+   Пресет — заготовка, а не единственный вход: открывает модалку заполненной, дальше
+   ручки крутятся вручную. Наружу вынесено семь ручек, которые понятны по названию;
+   прямизна прогулки, вероятность ветвления и коридоры приёмки остались внутри —
+   они настроены замерами, и трогать их незачем.
+
+   Две вещи здесь важнее самих ручек: у бюджета пустот показан надёжный предел
+   (ползунок, позволяющий попросить невозможное, — плохой ползунок), а при неудаче
+   выводится РАЗБОР отказов, чтобы было видно, какую ручку отпустить. */
+const CRAFT_KNOBS = [
+  { k: "w",      nom: "Ширина поля",    min: 5, max: 14 },
+  { k: "h",      nom: "Высота поля",    min: 5, max: 18 },
+  { k: "len",    nom: "Цель (длина)",   min: 6, max: 70 },
+  // после M разрезов на поле M+1 змей, каждая не короче двух клеток, а суммарная
+  // длина всегда равна цели — отсюда жёсткий предел на число ходов
+  { k: "moves",  nom: "Ходов в решении", min: 2, max: (c) => Math.max(2, Math.min(16, Math.floor(c.len / 2) - 1)) },
+  { k: "decoys", nom: "Обманок",        min: 0, max: 10 },
+];
+/* Разбор отказов человеческим языком: приёмка возвращает имя метрики, а игроку
+   нужно знать, какую ручку отпустить. */
+const WHYNOM = {
+  decoyLive: "обманки ни во что не играют",
+  safety: "слишком много тапов насмерть",
+  sols: "решение выходит единственным",
+  branch: "ветвистость мимо коридора",
+  farShare: "мало дальних ходов",
+  avgGap: "зазоры мельчают",
+  voidMiss: "столько пустот не набрать",
+  runMax: "передышки сбиваются в кучу",
+  alive: "поле не по зубам случайной игре",
+  starts: "мало ходов на старте",
+};
+const whyNom = (fail) => {
+  const head = String(fail).split(/[,:]/)[0].trim();
+  const key = head.split(/\s/)[0];
+  return WHYNOM[key] || head;
+};
+
+const PEAKS = [{ v: 0.35, nom: "в начале" }, { v: 0.6, nom: "в середине" }, { v: 1, nom: "к финалу" }];
+const RESTS = [{ v: 2, nom: "через ход" }, { v: 3, nom: "каждый 3-й" }, { v: 4, nom: "каждый 4-й" }, { v: 0, nom: "без них" }];
+
+/* Степпер отдаёт СДВИГ, а не готовое значение: два быстрых тапа попадают в один
+   пакет обновлений React и оба посчитались бы от одного и того же старого числа. */
+function Stepper({ nom, value, min, max, onStep, hint }) {
+  return (
+    <div className="hv-knob">
+      <span className="hv-knobnom">{nom}{hint ? <i className="hv-knobhint">{hint}</i> : null}</span>
+      <span className="hv-step">
+        <button className="hv-stepb" disabled={value <= min} onClick={() => onStep(-1)}>−</button>
+        <b>{value}</b>
+        <button className="hv-stepb" disabled={value >= max} onClick={() => onStep(1)}>+</button>
+      </span>
+    </div>
+  );
+}
+
+function CraftModal({ base, cfg, onSet, onClose, onGo, onReset, busy, fail }) {
+  const ceil = voidCeiling(cfg);
+  const roomy = cfg.len <= cfg.w * cfg.h - 4;
+  const тесно = !roomy ? `цель ${cfg.len} не уместится на ${cfg.w}×${cfg.h}` : null;
+  // цель тянет за собой предел ходов, ходы — предел пустот: подрезаем следом,
+  // иначе ползунок врёт о своей позиции, а генератор молча крутит невозможное
+  const clamp = (c) => {
+    const q = CRAFT_KNOBS.reduce((a, k) => {
+      const hi = typeof k.max === "function" ? k.max(a) : k.max;
+      return { ...a, [k.k]: Math.max(k.min, Math.min(hi, a[k.k])) };
+    }, c);
+    q.voids = Math.max(0, Math.min(q.voids, Math.max(4, Math.round(voidCeiling(q) * 1.3))));
+    return q;
+  };
+  const set = (k) => (v) => onSet((prev) => clamp({ ...prev, [k]: v }));
+  const step = (k) => (d) => onSet((prev) => clamp({ ...prev, [k]: prev[k] + d }));
+  return (
+    <div className="hv-overlay" onClick={busy ? undefined : onClose}>
+      <div className="hv-card hv-cfg" onClick={(e) => e.stopPropagation()}>
+        <div className="hv-cfgtop">
+          <span className="hv-cfgttl">Настройка «{base}»</span>
+          <button className="hv-mini" onClick={onClose} aria-label="Закрыть"><X size={16} /></button>
+        </div>
+
+        {CRAFT_KNOBS.map((q) => (
+          <Stepper key={q.k} nom={q.nom} min={q.min} value={cfg[q.k]} onStep={step(q.k)}
+            max={typeof q.max === "function" ? q.max(cfg) : q.max}
+            hint={q.k === "len" && тесно ? тесно : null} />
+        ))}
+
+        <div className="hv-knob col">
+          <span className="hv-knobnom">
+            Пустот всего <i className="hv-knobhint">надёжно до {ceil} · след решения {клеток(cfg.len + cfg.voids)}</i>
+          </span>
+          <span className="hv-slide">
+            <input type="range" min="0" max={Math.max(4, Math.round(ceil * 1.3))} value={Math.min(cfg.voids, Math.max(4, Math.round(ceil * 1.3)))}
+              onChange={(e) => set("voids")(+e.target.value)} />
+            <b className={cfg.voids > ceil ? "over" : ""}>{cfg.voids}</b>
+          </span>
+        </div>
+
+        <div className="hv-knob col">
+          <span className="hv-knobnom">Сложнее всего</span>
+          <span className="hv-chips">
+            {PEAKS.map((o) => (
+              <button key={o.nom} className={"hv-chip" + (cfg.peak === o.v ? " on" : "")}
+                onClick={() => set("peak")(o.v)}>{o.nom}</button>
+            ))}
+          </span>
+        </div>
+
+        <div className="hv-knob col">
+          <span className="hv-knobnom">Передышки <i className="hv-knobhint">ход вплотную, чтобы выдохнуть</i></span>
+          <span className="hv-chips">
+            {RESTS.map((o) => (
+              <button key={o.nom} className={"hv-chip" + (cfg.breather === o.v ? " on" : "")}
+                onClick={() => set("breather")(o.v)}>{o.nom}</button>
+            ))}
+          </span>
+        </div>
+
+        {fail ? (
+          <div className="hv-why">
+            <b>{fail.tries} попыток за {fail.sec} с — ни одна не прошла.</b>
+            {fail.rows.map((r) => <span key={r[0]}>{r[0]} — {r[1]}</span>)}
+          </div>
+        ) : null}
+
+        <div className="hv-btnrow">
+          {busy ? (
+            <>
+              <span className="hv-cfgbusy">Попытка {busy.tries} · {busy.sec} с</span>
+              <button className="hv-btn ghost" onClick={onGo.cancel}>Отмена</button>
+            </>
+          ) : (
+            <>
+              <button className="hv-btn ghost" onClick={onReset}>Сбросить</button>
+              <button className="hv-btn main" disabled={!roomy} onClick={onGo.run}><Wand2 size={15} /> Собрать</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- меню ---------- */
 function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft, onDrop, busy, note }) {
   const pack = packs[packIdx];
@@ -1604,13 +1757,13 @@ function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft
       </div>
       {pack.craft ? (
         <div className="hv-shop">
-          <div className="hv-shopline">Выбери пресет — генератор соберёт уровень обратным ходом и проверит его кодом самой игры.</div>
+          <div className="hv-shopline">Пресет — заготовка: открывает настройку, дальше крути ручки. Генератор собирает уровень с конца и проверяет его кодом самой игры.</div>
           <div className="hv-presets">
             {Object.keys(PRESETS).map((name) => (
               <button key={name} className="hv-preset" disabled={!!busy} onClick={() => onCraft(name)}>
-                <Wand2 size={14} /> {name}
+                <Sliders size={14} /> {name}
                 <span className="hv-presetmeta">
-                  {PRESETS[name].w}×{PRESETS[name].h} · {PRESETS[name].record ? "на счёт" : PRESETS[name].moves + " ходов"}
+                  {PRESETS[name].w}×{PRESETS[name].h} · {PRESETS[name].record ? "на счёт" : ходов(PRESETS[name].moves)}
                 </span>
               </button>
             ))}
@@ -1677,6 +1830,32 @@ export default function App() {
   });
   const [busy, setBusy] = useState(null);
   const [note, setNote] = useState(null);
+  const [craftOpen, setCraftOpen] = useState(null);   // имя пресета-заготовки или null
+  const [craftFail, setCraftFail] = useState(null);
+  const [craftCfgs, setCraftCfgs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("hv-craftcfg") || "{}"); } catch (e) { return {}; }
+  });
+  const abortRef = useRef(false);
+
+  const cfgOf = (name) => ({ ...PRESETS[name], ...(craftCfgs[name] || {}) });
+  const setCfg = (name, upd) => {
+    setCraftCfgs((prev) => {
+      const cur = { ...PRESETS[name], ...(prev[name] || {}) };
+      const got = typeof upd === "function" ? upd(cur) : upd;
+      const keep = {};
+      for (const k of ["w", "h", "len", "moves", "decoys", "voids", "peak", "breather"]) keep[k] = got[k];
+      const next = { ...prev, [name]: keep };
+      try { localStorage.setItem("hv-craftcfg", JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  };
+  const resetCfg = (name) => {
+    setCraftCfgs((prev) => {
+      const next = { ...prev }; delete next[name];
+      try { localStorage.setItem("hv-craftcfg", JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  };
 
   const saveCrafted = (next) => {
     setCrafted(next);
@@ -1685,32 +1864,45 @@ export default function App() {
 
   // Крутим попытки по одной, отдавая управление интерфейсу между ними, — иначе
   // экран замирает на секунды и кажется, что игра повисла.
-  async function craft(name) {
+  async function craft(name, cfg) {
     if (busy) return;
-    setNote(null);
+    setNote(null); setCraftFail(null);
+    abortRef.current = false;
     let made = null, tries = 0;
+    const why = {};
+    const bump = (t) => { why[t] = (why[t] || 0) + 1; };
     const ordinal = crafted.filter((c) => c.preset === name).length + 1;
     // пачками по 6: пауза между ними у браузера всё равно не короче ~4 мс,
     // а перерисовка счётчика на каждую попытку сама по себе дороже попытки
+    const t0 = Date.now();
     outer:
-    for (let round = 0; round < 24; round++) {
-      setBusy({ preset: name, tries });
+    for (let round = 0; round < 200; round++) {
+      setBusy({ preset: name, tries, sec: Math.round((Date.now() - t0) / 1000) });
       await new Promise((r) => setTimeout(r, 0));
+      if (abortRef.current || Date.now() - t0 > 30000) break;
       for (let b = 0; b < 6; b++) {
         tries++;
         const seed = ((Date.now() + tries * 7919) >>> 0) || 1;
         let r;
-        try { r = craftOnce(name, seed); } catch (e) { continue; }
-        if (!r.level) continue;
+        try { r = craftOnce(cfg || name, seed); } catch (e) { bump("генератор споткнулся"); continue; }
+        if (!r.level) { bump(whyNom(r.fail)); continue; }
         const c = acceptCrafted(name, r, ordinal);
-        if (c) { made = c; break outer; }
+        if (!c) { bump("игра не подтвердила решение"); continue; }
+        made = c; break outer;
       }
     }
     setBusy(null);
-    if (made) { saveCrafted([...crafted, made]); setNote(`Готово: ${made.name}.`); }
-    else setNote(`За ${tries} попыток ничего не прошло приёмку. Нажми ещё раз.`);
+    if (made) {
+      saveCrafted([...crafted, made]);
+      setNote(`Готово: ${made.name}.`);
+      setCraftOpen(null);
+    } else if (abortRef.current) {
+      setNote(`Отменено на ${tries}-й попытке.`);
+    } else {
+      setCraftFail({ tries, sec: Math.round((Date.now() - t0) / 1000),
+        rows: Object.entries(why).sort((a, b) => b[1] - a[1]).slice(0, 4) });
+    }
   }
-
   function onDrop(action, id) {
     const c = crafted[id];
     if (!c) return;
@@ -1729,7 +1921,7 @@ export default function App() {
   const craftLevels = useMemo(() => crafted.map(craftedToLevel), [crafted]);
   const packs = useMemo(() => PACKS.concat([{
     id: "craft", craft: true, name: "Мастерская",
-    note: crafted.length ? crafted.length + " своих уровня" : "генератор уровней",
+    note: crafted.length ? "свои " + уровней(crafted.length) : "генератор уровней",
     levels: craftLevels,
   }]), [craftLevels, crafted.length]);
   const pack = packs[packIdx];
@@ -1745,6 +1937,18 @@ export default function App() {
   return (
     <div className="hv-root">
       <style>{CSS_TEXT}</style>
+      {craftOpen ? (
+        <CraftModal
+          base={craftOpen}
+          cfg={cfgOf(craftOpen)}
+          busy={busy}
+          fail={craftFail}
+          onSet={(upd) => { setCraftFail(null); setCfg(craftOpen, upd); }}
+          onReset={() => { setCraftFail(null); resetCfg(craftOpen); }}
+          onClose={() => { if (!busy) { setCraftOpen(null); setCraftFail(null); } }}
+          onGo={{ run: () => craft(craftOpen, cfgOf(craftOpen)), cancel: () => { abortRef.current = true; } }}
+        />
+      ) : null}
       {screen === "menu" ? (
         <Menu
           packs={packs}
@@ -1754,7 +1958,7 @@ export default function App() {
           crafted={crafted}
           busy={busy}
           note={note}
-          onCraft={craft}
+          onCraft={(name) => { setCraftFail(null); setCraftOpen(name); }}
           onDrop={onDrop}
           onPack={(i) => { setPackIdx(i); setIdx(0); setNote(null); }}
           onPlay={(i) => { setIdx(i); setScreen("game"); }}
@@ -1833,6 +2037,33 @@ body{overflow-x:hidden;-webkit-text-size-adjust:100%;}
 .hv-presetmeta{font-size:10px;font-weight:600;color:#8C9E88;text-transform:none;}
 .hv-shopstatus{margin-top:9px;font-size:12px;color:#EFAF3C;}
 .hv-shopempty{font-size:12px;color:#8C9E88;padding:10px 2px;}
+/* Настройка генератора. На телефоне ряд «название — значение» читается лучше
+   таблицы, поэтому каждая ручка — своя строка, а не сетка. */
+.hv-card.hv-cfg{text-align:left;max-height:86vh;overflow-y:auto;width:100%;}
+.hv-cfgtop{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;}
+.hv-cfgttl{font-family:Unbounded,Rubik,sans-serif;font-weight:500;font-size:15px;color:#F3F0E4;}
+.hv-knob{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;
+  border-top:1px solid #24352A;}
+.hv-knob.col{flex-direction:column;align-items:stretch;gap:7px;}
+.hv-knobnom{font-size:13px;color:#C9D6C2;display:flex;flex-direction:column;gap:1px;}
+.hv-knobhint{font-style:normal;font-size:10.5px;color:#8AA089;}
+.hv-step{display:flex;align-items:center;gap:4px;flex:0 0 auto;}
+.hv-step b{min-width:34px;text-align:center;font-size:15px;font-weight:800;color:#F3F0E4;}
+.hv-stepb{width:32px;height:32px;border-radius:10px;border:1px solid #2C3E30;background:#1B2A1F;
+  color:#F3F0E4;font:inherit;font-size:17px;font-weight:800;line-height:1;cursor:pointer;}
+.hv-stepb:disabled{opacity:.3;}
+.hv-slide{display:flex;align-items:center;gap:10px;}
+.hv-slide input{flex:1;min-width:0;accent-color:#9CCB3B;height:26px;}
+.hv-slide b{min-width:28px;text-align:right;font-size:15px;font-weight:800;color:#F3F0E4;}
+.hv-slide b.over{color:#EFAF3C;}
+.hv-chips{display:flex;gap:6px;flex-wrap:wrap;}
+.hv-chip{font:inherit;font-size:12px;font-weight:600;color:#8AA089;background:#1B2A1F;
+  border:1px solid #2C3E30;border-radius:10px;padding:7px 10px;cursor:pointer;}
+.hv-chip.on{border-color:#58A942;color:#F3F0E4;background:#20321F;}
+.hv-why{margin-top:10px;padding:9px 11px;border-radius:12px;background:#33290F;border:1px solid #5C4A18;
+  display:flex;flex-direction:column;gap:3px;font-size:12px;color:#F0D9A0;}
+.hv-why b{color:#EFAF3C;font-size:12.5px;}
+.hv-cfgbusy{flex:1;font-size:13px;color:#EFAF3C;font-weight:600;}
 .hv-mini{display:inline-flex;padding:5px;border-radius:8px;color:#8C9E88;}
 .hv-mini:active{background:#243527;color:#F3F0E4;}
 .hv-fill{height:100%;border-radius:8px;background:linear-gradient(90deg,#58A942,#9CCB3B);transition:width .35s ease;}
