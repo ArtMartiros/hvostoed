@@ -1860,6 +1860,8 @@ const CRAFT_KNOBS = [
     hint: "сама не ходит — сначала в решение, потом в обманки" },
   { k: "bridges", nom: "Мостов",         min: 0, max: 4 },
   { k: "turns",  nom: "Колен",           min: 0, max: 8 },
+  { k: "mechs",  nom: "Механик на уровень", min: 0, max: 5,
+    hint: "0 — все сразу; 1–2 читаются, пять поверх базового правила — нет" },
 ];
 /* Разбор отказов человеческим языком: приёмка возвращает имя метрики, а игроку
    нужно знать, какую ручку отпустить. */
@@ -2142,7 +2144,7 @@ export default function App() {
       const cur = { ...PRESETS[name], ...(prev[name] || {}) };
       const got = typeof upd === "function" ? upd(cur) : upd;
       const keep = {};
-      for (const k of ["w", "h", "len", "moves", "decoys", "bridges", "turns", "spiky", "sleepy", "apples", "voids", "peak", "breather"]) keep[k] = got[k];
+      for (const k of ["w", "h", "len", "moves", "decoys", "bridges", "turns", "spiky", "sleepy", "apples", "mechs", "voids", "peak", "breather"]) keep[k] = got[k];
       const next = { ...prev, [name]: keep };
       try { localStorage.setItem("hv-craftcfg", JSON.stringify(next)); } catch (e) {}
       return next;

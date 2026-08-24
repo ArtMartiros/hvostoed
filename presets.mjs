@@ -13,23 +13,23 @@ import * as S from './levelstats.mjs';
 
 export const PRESETS = {
   ученик:   { w: 7,  h: 7,  len: 14, moves: 4,  maxGap: 3, voids: 5,  peak: 1, breather: 3, straightBias: 0.7,
-              decoys: 2, spiky: 0, sleepy: 1, apples: 1, decoyMax: 3,
+              decoys: 2, spiky: 0, sleepy: 1, apples: 1, mechs: 1, decoyMax: 3,
               min: { decoyLive: 1, safety: 0.75, sols: 2, branch: 2 },
               max: { branch: 5, voidMiss: 2, runMax: 3 } },
   средний:  { w: 9,  h: 9,  len: 22, moves: 6,  maxGap: 4, voids: 12,  peak: 1, breather: 3, straightBias: 0.7,
-              decoys: 3, bridges: 1, turns: 2, spiky: 1, sleepy: 1, apples: 2, decoyMax: 4,
+              decoys: 3, bridges: 1, turns: 2, spiky: 1, sleepy: 1, apples: 2, mechs: 2, decoyMax: 4,
               min: { decoyLive: 1, safety: 0.65, sols: 3, branch: 2.5, farShare: 0.5, markUse: 1 },
               max: { branch: 6, voidMiss: 4, runMax: 3 } },
   длинный:  { w: 10, h: 11, len: 34, moves: 9,  maxGap: 5, voids: 19, peak: 1, breather: 3, straightBias: 0.8,
-              decoys: 4, bridges: 1, turns: 3, spiky: 1, sleepy: 2, apples: 2, decoyMax: 5,
+              decoys: 4, bridges: 1, turns: 3, spiky: 1, sleepy: 2, apples: 2, mechs: 3, decoyMax: 5,
               min: { decoyLive: 0.75, safety: 0.6, sols: 3, branch: 3, farShare: 0.5, markUse: 1 },
               max: { branch: 7, voidMiss: 5, runMax: 3 } },
   пустоты:  { w: 10, h: 11, len: 30, moves: 8,  maxGap: 5, voids: 22, peak: 1, breather: 3, straightBias: 0.85,
-              decoys: 5, bridges: 2, turns: 3, spiky: 1, sleepy: 2, apples: 2, decoyMax: 4,
+              decoys: 5, bridges: 2, turns: 3, spiky: 1, sleepy: 2, apples: 2, mechs: 3, decoyMax: 4,
               min: { decoyLive: 0.75, safety: 0.6, sols: 2, branch: 2.5, farShare: 0.7, avgGap: 1.3, markUse: 1 },
               max: { branch: 7, voidMiss: 5, runMax: 3 } },
   простор:  { w: 12, h: 16, len: 52, moves: 13, maxGap: 5, voids: 33, peak: 1, breather: 3, straightBias: 0.8,
-              decoys: 8, bridges: 2, turns: 4, spiky: 2, sleepy: 3, apples: 3, decoyMax: 5, record: true,
+              decoys: 8, bridges: 2, turns: 4, spiky: 2, sleepy: 3, apples: 3, mechs: 0, decoyMax: 5, record: true,
               min: { decoyLive: 0.6, branch: 3, farShare: 0.6, avgGap: 1.2, alive: 0.2, markUse: 1 },
               max: { branch: 8, alive: 0.65, voidMiss: 7, runMax: 3 } },
 };
@@ -127,10 +127,15 @@ export function voidCeiling(p) {
   const rest = p.breather > 0 ? Math.max(0, Math.ceil((p.moves - 2) / p.breather)) : 0;
   const slots = Math.max(1, p.moves - rest);
   const flat = Math.min(0.5 * p.len, 1.9 * p.moves, p.maxGap * slots);
+  /* Ограничение на число механик может выкинуть колена, а весь запас сверх плоского
+     потолка держится именно на них. Считаем по худшему: доля уровней, где колена
+     уцелели, — иначе ползунок обещает то, чего на этом сиде может не быть. */
+  const kinds = ['bridges', 'turns', 'apples', 'spiky', 'sleepy'].filter((k) => (p[k] || 0) > 0).length;
+  const keep = p.mechs > 0 && kinds > p.mechs ? p.mechs / kinds : 1;
   // Колена снимают требование длинных ПРЯМЫХ участков, из которого потолок и брался.
   // Замер на «пустотах» (цель 30): без колен доступно ~16, при трёх ~22, при шести ~25,
   // дальше упирается примерно в 0.85 цели.
-  return Math.max(0, Math.round(Math.min(0.85 * p.len, flat + 1.6 * (p.turns || 0))));
+  return Math.max(0, Math.round(Math.min(0.85 * p.len, flat + 1.6 * keep * (p.turns || 0))));
 }
 
 /* Одна попытка. Первым аргументом либо имя пресета, либо готовый конфиг из модалки

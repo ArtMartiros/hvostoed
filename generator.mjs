@@ -305,6 +305,22 @@ export function generate(cfg) {
   const rnd = makeRng(cfg.seed);
   cfg = { maxGap: 3, tailStraight: 0.6, branch: 0.5, straightBias: 0.55, decoys: 0,
           peak: 1, breather: 3, ...cfg, _nextId: 1 };
+  /* Сколько РАЗНЫХ механик пускать на доску. Ручка «сколько чего» этого не решает:
+     ничто не мешало навалить мосты, колена, яблоки, колючих и спящих на один
+     уровень разом — а это пять правил поверх базового, и читать такое нельзя.
+     Подача по одной-двум за уровень — то, ради чего ручка и нужна. Выбор случайный
+     по сиду: два уровня с одним конфигом окажутся про разное. */
+  const MECHS = ['bridges', 'turns', 'apples', 'spiky', 'sleepy'];
+  if (cfg.mechs > 0) {
+    const kinds = MECHS.filter((k) => (cfg[k] || 0) > 0);
+    if (kinds.length > cfg.mechs) {
+      const keep = new Set(shuffled(rnd, kinds).slice(0, cfg.mechs));
+      const cut = {};
+      for (const k of kinds) if (!keep.has(k)) cut[k] = 0;
+      cfg = { ...cfg, ...cut };
+    }
+  }
+
   const final = walk(rnd, cfg.w, cfg.h, cfg.len, new Set(), null, null, cfg.straightBias);
   if (!final) return null;
 
@@ -457,6 +473,7 @@ export function generate(cfg) {
   }
   state = state.concat(traps);
   return { w: cfg.w, h: cfg.h, snakes: state, moves, len: cfg.len,
+           mechs: MECHS.filter((k) => (cfg[k] || 0) > 0),
            apples: moves.filter((m) => m.apple).length,
            decoys: decoys.length + traps.length + bridges.length, bridges, turns,
            voids: moves.reduce((a, m) => a + m.gap, 0), want, peak: cfg.peak, breather: cfg.breather };
