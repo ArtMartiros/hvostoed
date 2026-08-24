@@ -82,7 +82,7 @@ export function raycast(state, i, w, h, board) {
       if (hit.si === i) return { kind: 'self', gap: path.length, path, dir: d };
       if (hit.ci === hit.len - 1)
         return state[hit.si].spiky
-          ? { kind: 'spikyTail', gap: path.length, path, dir: d }
+          ? { kind: 'spikyTail', prey: hit.si, gap: path.length, path, dir: d }
           : { kind: 'tail', prey: hit.si, gap: path.length, path, dir: d };
       return { kind: 'block', gap: path.length, path, dir: d };
     }
@@ -361,25 +361,114 @@ export function generate(cfg) {
     state = state.concat([{ id: cfg._nextId++, cells: d, decoy: true, onBridge: true }]);
     for (const q of d) forbidden.add(ck(q));
   }
-  const decoys = [];
-  for (let t = 0; t < cfg.decoys; t++) {
-    const len = 2 + Math.floor(rnd() * (cfg.decoyMax || 4));
-    const d = walk(rnd, cfg.w, cfg.h, len, forbidden, null, null, 0.4);
-    if (!d) continue;
-    const mark = {};
-    if (decoys.filter((q) => q.spiky).length < (cfg.spiky || 0)) mark.spiky = true;
-    else if (decoys.filter((q) => q.sleep).length < (cfg.sleepy || 0)) mark.sleep = true;
-    decoys.push({ id: cfg._nextId++, cells: d, decoy: true, ...mark });
-    for (const c of d) forbidden.add(ck(c));
+  /* Спящая — в РЕШЕНИИ, и это не вольность, а точный факт о нём.
+     Хода «просто пойти» в игре нет: любой ход — обед или вылет. Значит кусок,
+     который в плане ни разу не выступает едоком, вперёд по времени не двигается
+     вообще, и пометка «спит» — правда о нём, а не ограничение. Таких кусков
+     большинство: едоков не больше числа ходов, а кусков на один больше.
+     Игроку это честная опора: спящая еда гарантированно не уползёт. */
+  const eaters = new Set(moves.map((m) => m.eater));
+  let sleepLeft = cfg.sleepy || 0;
+  // только куски РЕШЕНИЯ: мостовая обманка уже стоит в state, а её работа — стоять
+  // поперёк луча, и «спит» ей ничего не добавляет
+  for (const s of shuffled(rnd, state.filter((s) => !s.decoy && !eaters.has(s.id)))) {
+    if (sleepLeft <= 0) break;
+    s.sleep = true; sleepLeft--;
   }
-  state = state.concat(decoys);
+
   const turns = [...floor.tiles].map(([k, v]) => {
     const [x, y] = k.split(',').map(Number);
     return [x, y, v[0], v[1]];
   });
+
+  // обычные обманки — первыми, чтобы приманки ставились уже с их учётом
+  const wantSpiky = cfg.spiky || 0;
+  const decoys = [];
+  for (let t = 0; t < Math.max(0, cfg.decoys - wantSpiky - sleepLeft); t++) {
+    const len = 2 + Math.floor(rnd() * (cfg.decoyMax || 4));
+    const d = walk(rnd, cfg.w, cfg.h, len, forbidden, null, null, 0.4);
+    if (!d) continue;
+    decoys.push({ id: cfg._nextId++, cells: d, decoy: true });
+    for (const c of d) forbidden.add(ck(c));
+  }
+  state = state.concat(decoys);
+
+  /* Помеченные обманки — ПРИМАНКИ, а не украшение. И колючая, и спящая отличаются
+     от обычной змеи ровно тогда, когда чей-то луч достаёт до их ХВОСТА: у колючей
+     это авария вместо обеда, у спящей — обед, который гарантированно не уползёт.
+     Если до хвоста никто не дотягивается, обе пометки — краска.
+
+     Поэтому ищем клетки, куда луч какой-нибудь змеи долетает по ходу решения,
+     и сажаем помеченную хвостом туда. Клетки самого решения и его зазоров лежат
+     в запретном списке, так что подложить свинью решению это не может.
+
+     Три вещи, каждая из которых стоила половины пометок, пока не была сделана:
+     ставить ПОСЛЕ обычных обманок (иначе следующая же встанет перед ловушкой),
+     считать лучи по доске СО ВСЕМИ обманками, и запрещать телу приманки ложиться
+     на подлёт к собственному хвосту — оно же его и заслоняло. */
+  const spots = trapSpots(state, moves, cfg, forbidden, { bridges, turns });
+  const traps = [];
+  const clear = new Set();                     // подлёт к уже поставленной приманке — не занимать
+  let spikyLeft = wantSpiky;
+  for (const sp of shuffled(rnd, spots)) {
+    if (spikyLeft <= 0 && sleepLeft <= 0) break;
+    if (clear.has(ck(sp.c)) || sp.path.some((q) => clear.has(ck(q)))) continue;
+    const len = 2 + Math.floor(rnd() * (cfg.decoyMax || 4));
+    const block = new Set(forbidden);
+    for (const q of sp.path) block.add(ck(q));
+    for (const q of clear) block.add(q);       // и на чужой подлёт ложиться нельзя
+    block.delete(ck(sp.c));
+    const d = walk(rnd, cfg.w, cfg.h, len, block, sp.c, null, 0.4);
+    if (!d) continue;
+    d.reverse();                               // walk растит от начала — а нам нужен ХВОСТ в приманке
+    const mark = spikyLeft > 0 ? (spikyLeft--, { spiky: true }) : (sleepLeft--, { sleep: true });
+    traps.push({ id: cfg._nextId++, cells: d, decoy: true, trap: true, ...mark });
+    for (const q of d) forbidden.add(ck(q));
+    for (const q of sp.path) clear.add(ck(q));
+  }
+  state = state.concat(traps);
   return { w: cfg.w, h: cfg.h, snakes: state, moves, len: cfg.len,
-           decoys: decoys.length + bridges.length, bridges, turns,
+           decoys: decoys.length + traps.length + bridges.length, bridges, turns,
            voids: moves.reduce((a, m) => a + m.gap, 0), want, peak: cfg.peak, breather: cfg.breather };
+}
+
+/* Клетки, куда чей-нибудь луч долетел бы по ходу решения. Хвост колючей,
+   поставленный на такую клетку, превращает её из «пусто» в «авария» — это и есть
+   соблазн. Идём по состояниям решения, от головы каждой змеи шагаем в её сторону
+   взгляда, пока пусто, и собираем клетки, свободные от решения и его зазоров. */
+function trapSpots(start, moves, cfg, forbidden, lv) {
+  const out = [], seen = new Set();
+  let state = start.map((s) => ({ id: s.id, cells: s.cells.map((c) => c.slice()), sleep: !!s.sleep }));
+  const br = boardOf(lv);
+  for (let m = 0; m <= moves.length; m++) {
+    const occ = occSet(state);
+    for (const s of state) {
+      if (s.cells.length < 2 || s.sleep) continue;      // спящая никуда не смотрит
+      let d = [s.cells[0][0] - s.cells[1][0], s.cells[0][1] - s.cells[1][1]];
+      let c = add(s.cells[0], d);
+      const path = [];                                  // клетки ПЕРЕД ловушкой: должны остаться пустыми
+      while (inside(cfg.w, cfg.h, c) && !occ.has(ck(c))) {
+        if (br.bridges.has(ck(c))) { path.push(c.slice()); c = add(c, d); continue; }
+        const t = br.turns.get(ck(c));
+        if (t) {
+          const from = sideName([-d[0], -d[1]]);
+          if (t[0] !== from && t[1] !== from) break;     // в спину колена луч не пройдёт
+          d = SIDES[t[0] === from ? t[1] : t[0]];
+        } else if (!forbidden.has(ck(c)) && !seen.has(ck(c))) {
+          seen.add(ck(c)); out.push({ c: c.slice(), path: path.map((q) => q.slice()) });
+        }
+        path.push(c.slice());
+        c = add(c, d);
+      }
+    }
+    if (m === moves.length) break;
+    const i = state.findIndex((s) => s.id === moves[m].eater);
+    if (i < 0) break;
+    const r = raycast(state, i, cfg.w, cfg.h, br);
+    if (r.kind !== 'tail') break;
+    state = applyEat(state, i, r);
+  }
+  return out;
 }
 
 /* ---------- обязательная проверка вперёд ---------- */
@@ -390,6 +479,7 @@ export function verify(lv) {
     const mv = lv.moves[m];
     const i = state.findIndex((s) => s.id === mv.eater);
     if (i < 0) return { ok: false, at: m, why: 'едок пропал' };
+    if (state[i].sleep) return { ok: false, at: m, why: 'спящую заставили ходить' };
     const r = raycast(state, i, lv.w, lv.h, br);
     if (r.kind !== 'tail') return { ok: false, at: m, why: 'луч не в хвост, а ' + r.kind };
     if (state[r.prey].id !== mv.prey) return { ok: false, at: m, why: 'луч попал не в ту змею' };

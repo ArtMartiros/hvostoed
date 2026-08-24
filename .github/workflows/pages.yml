@@ -32,6 +32,8 @@ jobs:
         run: node records.mjs hvostoed.jsx
       - name: Подсказка доводит до цели и до потолка
         run: node hints.mjs hvostoed.jsx
+      - name: Игра проходит задуманный план генератора
+        run: node plancheck.mjs 4
       - name: Правило конца партии
         run: node ending.mjs hvostoed.jsx
 

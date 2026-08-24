@@ -124,6 +124,40 @@ const tiltOf = (a) => {
   return a.reduce((x, y, i) => x + i * y, 0) / ((a.length - 1) * s);
 };
 
+/* Работает ли пометка. Колючая отличается от обычной змеи ровно тогда, когда
+   чей-то луч достаёт до её ХВОСТА, — иначе это тело, в которое врезаешься, как
+   в любое другое, и шипы декоративны. Спящая отличается тогда, когда, будь она
+   бодрой, ей было бы куда пойти, — иначе «спит» неотличимо от «застряла».
+   Ставится это построением, но между постановкой и итоговой доской добавляются
+   другие обманки, и они могут заслонить ловушку. Поэтому меряем по факту. */
+export function marks(lv) {
+  const br = G.boardOf(lv);
+  const marked = lv.snakes.filter((s) => s.spiky || s.sleep);
+  if (!marked.length) return { markUse: 1, spikyUse: 1, sleepUse: 1 };
+  const works = new Set();
+  let state = lv.snakes.map((s) => ({ id: s.id, cells: s.cells.map((c) => c.slice()),
+    spiky: !!s.spiky, sleep: !!s.sleep }));
+  // спящую из решения съедают по плану — до её хвоста дотягиваются по определению
+  for (const m of lv.moves || []) works.add(m.prey);
+  for (let m = 0; m <= (lv.moves || []).length; m++) {
+    for (let i = 0; i < state.length; i++) {
+      if (state[i].sleep) continue;
+      const r = G.raycast(state, i, lv.w, lv.h, br);
+      if (r.kind === 'spikyTail' || r.kind === 'tail') works.add(state[r.prey].id);
+    }
+    if (m === (lv.moves || []).length) break;
+    const i = state.findIndex((s) => s.id === lv.moves[m].eater);
+    if (i < 0) break;
+    const r = G.raycast(state, i, lv.w, lv.h, br);
+    if (r.kind !== 'tail') break;
+    state = G.applyEat(state, i, r);
+  }
+  const share = (arr) => (arr.length ? arr.filter((s) => works.has(s.id)).length / arr.length : 1);
+  return { markUse: share(marked),
+           spikyUse: share(lv.snakes.filter((s) => s.spiky)),
+           sleepUse: share(lv.snakes.filter((s) => s.sleep)) };
+}
+
 export function curve(lv, target) {
   const br = G.boardOf(lv);
   const win = target ? winner(lv, target) : null;

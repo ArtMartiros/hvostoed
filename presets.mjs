@@ -17,20 +17,20 @@ export const PRESETS = {
               min: { decoyLive: 1, safety: 0.75, sols: 2, branch: 2 },
               max: { branch: 5, voidMiss: 2, runMax: 3 } },
   средний:  { w: 9,  h: 9,  len: 22, moves: 6,  maxGap: 4, voids: 12,  peak: 1, breather: 3, straightBias: 0.7,
-              decoys: 3, bridges: 1, turns: 2, spiky: 1, sleepy: 0, decoyMax: 4,
-              min: { decoyLive: 1, safety: 0.65, sols: 3, branch: 2.5, farShare: 0.5 },
+              decoys: 3, bridges: 1, turns: 2, spiky: 1, sleepy: 1, decoyMax: 4,
+              min: { decoyLive: 1, safety: 0.65, sols: 3, branch: 2.5, farShare: 0.5, markUse: 1 },
               max: { branch: 6, voidMiss: 4, runMax: 3 } },
   длинный:  { w: 10, h: 11, len: 34, moves: 9,  maxGap: 5, voids: 19, peak: 1, breather: 3, straightBias: 0.8,
-              decoys: 4, bridges: 1, turns: 3, spiky: 1, sleepy: 1, decoyMax: 5,
-              min: { decoyLive: 0.75, safety: 0.6, sols: 3, branch: 3, farShare: 0.5 },
+              decoys: 4, bridges: 1, turns: 3, spiky: 1, sleepy: 2, decoyMax: 5,
+              min: { decoyLive: 0.75, safety: 0.6, sols: 3, branch: 3, farShare: 0.5, markUse: 1 },
               max: { branch: 7, voidMiss: 5, runMax: 3 } },
   пустоты:  { w: 10, h: 11, len: 30, moves: 8,  maxGap: 5, voids: 22, peak: 1, breather: 3, straightBias: 0.85,
-              decoys: 5, bridges: 2, turns: 3, spiky: 1, sleepy: 1, decoyMax: 4,
-              min: { decoyLive: 0.75, safety: 0.6, sols: 2, branch: 2.5, farShare: 0.7, avgGap: 1.3 },
+              decoys: 5, bridges: 2, turns: 3, spiky: 1, sleepy: 2, decoyMax: 4,
+              min: { decoyLive: 0.75, safety: 0.6, sols: 2, branch: 2.5, farShare: 0.7, avgGap: 1.3, markUse: 1 },
               max: { branch: 7, voidMiss: 5, runMax: 3 } },
   простор:  { w: 12, h: 16, len: 52, moves: 13, maxGap: 5, voids: 33, peak: 1, breather: 3, straightBias: 0.8,
-              decoys: 8, bridges: 2, turns: 4, spiky: 2, sleepy: 2, decoyMax: 5, record: true,
-              min: { decoyLive: 0.6, branch: 3, farShare: 0.6, avgGap: 1.2, alive: 0.2 },
+              decoys: 8, bridges: 2, turns: 4, spiky: 2, sleepy: 3, decoyMax: 5, record: true,
+              min: { decoyLive: 0.6, branch: 3, farShare: 0.6, avgGap: 1.2, alive: 0.2, markUse: 1 },
               max: { branch: 8, alive: 0.65, voidMiss: 7, runMax: 3 } },
 };
 
@@ -44,7 +44,9 @@ function decoyLiveness(lv) {
   // Мостовая обманка исключена намеренно: её работа — стоять поперёк луча и врать,
   // что путь закрыт. Она соблазняет собой самим фактом, а не съедобностью, и то,
   // что решение через неё проходит, гарантировано построением.
-  const decoys = lv.snakes.filter((s) => s.decoy && !s.onBridge);
+  // Колючая-ловушка — по той же причине: её хвост несъедобен по определению, а её
+  // работа — стоять в чужом луче и жалить. Что она работает, меряет markUse.
+  const decoys = lv.snakes.filter((s) => s.decoy && !s.onBridge && !s.trap);
   if (!decoys.length) return 1;
   const st = lv.snakes.map((s) => ({ cells: s.cells }));
   const mv = G.movesOf(st, lv.w, lv.h, G.boardOf(lv));
@@ -63,7 +65,9 @@ function decoyLiveness(lv) {
 export function measureCheap(lv, preset) {
   const sh = S.shape(lv, preset.record ? 120 : 50, lv.len * 7 + 1);
   const cv = S.curve(lv, null) || {};
+  const mk = S.marks(lv);
   return { decoyLive: decoyLiveness(lv), starts: sh.starts, branch: sh.branch,
+    markUse: mk.markUse, spikyUse: mk.spikyUse, sleepUse: mk.sleepUse,
     voids: cv.voids, voidMiss: cv.voidMiss, runMax: cv.runMax, restShare: cv.restShare,
     tiltWant: cv.tiltWant, tiltGap: cv.tiltGap, gaps: cv.gaps,
     farShare: sh.farShare, avgGap: sh.avgGap, randMed: sh.randMed, randTop: sh.randTop,
@@ -100,7 +104,7 @@ export function measure(lv, preset) {
 }
 
 // какие поля проверяются на дешёвом заходе — остальные ждут дорогого
-const CHEAP = new Set(['decoyLive', 'starts', 'branch', 'farShare', 'avgGap', 'voidMiss', 'runMax', 'tiltGap', 'restShare']);
+const CHEAP = new Set(['decoyLive', 'starts', 'branch', 'farShare', 'avgGap', 'voidMiss', 'runMax', 'tiltGap', 'restShare', 'markUse', 'spikyUse', 'sleepUse']);
 function checkSome(p, m, cheapOnly) {
   const fail = [];
   for (const [k, v] of Object.entries(p.min || {})) {
