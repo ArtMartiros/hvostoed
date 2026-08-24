@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Undo2, RotateCcw, Star, Play, Lightbulb } from "lucide-react";
+import { ChevronLeft, Undo2, RotateCcw, Star, Play, Lightbulb, Wand2, Copy, Trash2 } from "lucide-react";
+import { PRESETS, craftOnce } from "./presets.mjs";
 
 /* ================================================================
    ХВОСТОЕД — прототип v3
@@ -715,6 +716,51 @@ const buildPack = (raw, mode) =>
     };
   });
 
+/* ---------- мастерская ----------
+   Уровень, собранный генератором, принимается только если его проходит код самой
+   игры: тем же планировщиком, что стоит за лампочкой. Для целевого уровня план
+   обязан существовать и не быть короче задуманного (иначе где-то срез), для поля
+   рекорда потолком объявляется то, что игра реально сумела собрать. */
+const withIds = (snakes) => snakes.map((s, i) => ({ id: "s" + i, cells: s.cells.map((c) => c.slice()) }));
+const NOROCKS = new Set();
+
+function acceptCrafted(name, r, ordinal) {
+  const lv = r.level, m = r.metrics;
+  const snakes = lv.snakes.map((s) => ({ cells: s.cells.map((c) => c.slice()) }));
+  const base = { w: lv.w, h: lv.h, snakes, preset: name, seed: r.seed,
+                 name: name.charAt(0).toUpperCase() + name.slice(1) + " " + ordinal };
+  if (r.record) {
+    const plan = planLongest({ w: lv.w, h: lv.h }, withIds(snakes), NOROCKS);
+    if (!plan) return null;
+    const got = replayPlan({ w: lv.w, h: lv.h }, withIds(snakes), plan, NOROCKS);
+    if (got.broken || got.len < 2) return null;
+    return { ...base, mode: "record", ceiling: got.len, proof: "beam", mass: m.mass,
+      marks: [Math.round(got.len * 0.5), Math.round(got.len * 0.75), got.len],
+      lesson: `${m.snakes} змей · ${m.mass} клеток · игра собирает ${got.len} за ${got.steps} ходов` };
+  }
+  const target = lv.len;
+  const plan = planGoal({ w: lv.w, h: lv.h, target }, withIds(snakes), NOROCKS);
+  if (!plan) return null;
+  if (plan.length < lv.moves.length) return null;   // игра нашла путь короче задуманного
+  return { ...base, mode: "goal", target,
+    lesson: `Цель ${target} за ${plan.length} ходов · решений ${m.sols} · безопасных тапов ${Math.round(100 * m.safety)}%` };
+}
+
+const craftedToLevel = (c, i) => {
+  const raw = { ...c, rocks: [] };
+  const colors = paintPack(raw);
+  return { ...raw, id: i, rocks: [],
+    snakes: c.snakes.map((sn, si) => ({ id: "s" + si, color: colors[si], spiky: false, cells: sn.cells })) };
+};
+
+const craftedToText = (c) => `  {
+    name: ${JSON.stringify(c.name)}, lesson: ${JSON.stringify(c.lesson)},
+    w: ${c.w}, h: ${c.h}, ${c.mode === "record" ? `ceiling: ${c.ceiling}, proof: "beam", mass: ${c.mass}, marks: ${JSON.stringify(c.marks)}` : `target: ${c.target}`},
+    snakes: [
+${c.snakes.map((sn) => "      { cells: [" + sn.cells.map(([x, y]) => `[${x}, ${y}]`).join(", ") + "] },").join("\n")}
+    ],
+  },   // пресет ${c.preset}, сид ${c.seed}`;
+
 const PACKS = [
   { id: "void", name: "Пустота", note: "19 уровней · только змеи", levels: buildPack(RAW_LEVELS_VOID) },
   { id: "record", name: "Рекорд", note: "3 поля 12×16 · без цели, на счёт", levels: buildPack(RAW_FIELDS, "record") },
@@ -820,6 +866,23 @@ function planGoal(level, snakes, rockSet) {
 
 // Самая длинная змея. Ширина 160: на всех трёх полях даёт тот же результат, что и 320,
 // и укладывается в полсекунды на самом плотном (29 змей).
+// Прогон плана до конца — им принимаем сгенерированные уровни: годен тот,
+// который проходит код самой игры, а не только механика генератора.
+function replayPlan(level, snakes, plan, rockSet) {
+  const map = new Map(plan.map((st) => [st.k, st.sid]));
+  let sn = snakes, steps = 0;
+  while (steps < 80) {
+    const sid = map.get(stateKey(sn));
+    if (sid == null) break;
+    const ray = raycast(sn, sid, level.w, level.h, rockSet);
+    if (ray.kind === "tail") sn = applyEat(sn, sid, ray);
+    else if (ray.kind === "edge") sn = sn.filter((q) => q.id !== sid);
+    else return { len: 0, steps, broken: true };
+    steps++;
+  }
+  return { len: maxLen(sn), steps, broken: false };
+}
+
 function planLongest(level, snakes, rockSet) {
   const total = (sn) => sn.reduce((t, s) => t + s.cells.length, 0);
   let layer = [{ sn: snakes, k: stateKey(snakes), from: null, sid: null }];
@@ -1469,8 +1532,8 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
 }
 
 /* ---------- меню ---------- */
-function Menu({ stars, records, onPlay, packIdx, onPack }) {
-  const pack = PACKS[packIdx];
+function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft, onDrop, busy, note }) {
+  const pack = packs[packIdx];
   return (
     <div className="hv-screen hv-menu">
       <div className="hv-logo">ХВОСТОЕД</div>
@@ -1492,14 +1555,35 @@ function Menu({ stars, records, onPlay, packIdx, onPack }) {
         )}
       </ul>
       <div className="hv-packs">
-        {PACKS.map((p, i) => (
+        {packs.map((p, i) => (
           <button key={p.id} className={"hv-pack" + (i === packIdx ? " hv-pack-on" : "")} onClick={() => onPack(i)}>
             <span className="hv-packname">{p.name}</span>
             <span className="hv-packnote">{p.note}</span>
           </button>
         ))}
       </div>
+      {pack.craft ? (
+        <div className="hv-shop">
+          <div className="hv-shopline">Выбери пресет — генератор соберёт уровень обратным ходом и проверит его кодом самой игры.</div>
+          <div className="hv-presets">
+            {Object.keys(PRESETS).map((name) => (
+              <button key={name} className="hv-preset" disabled={!!busy} onClick={() => onCraft(name)}>
+                <Wand2 size={14} /> {name}
+                <span className="hv-presetmeta">
+                  {PRESETS[name].w}×{PRESETS[name].h} · {PRESETS[name].record ? "на счёт" : PRESETS[name].moves + " ходов"}
+                </span>
+              </button>
+            ))}
+          </div>
+          {busy ? <div className="hv-shopstatus">Собираю «{busy.preset}» — попытка {busy.tries}…</div>
+                : note ? <div className="hv-shopstatus">{note}</div> : null}
+        </div>
+      ) : null}
+
       <div className="hv-levels">
+        {pack.craft && !pack.levels.length && !busy ? (
+          <div className="hv-shopempty">Пока пусто. Нажми пресет — и здесь появится уровень.</div>
+        ) : null}
         {pack.levels.map((lv) => {
           const rec = records[pack.id + ":" + lv.id] || 0;
           const got = lv.mode === "record"
@@ -1507,17 +1591,24 @@ function Menu({ stars, records, onPlay, packIdx, onPack }) {
             : (stars[pack.id + ":" + lv.id] || 0);
           return (
             <button key={lv.id} className="hv-lvcard" onClick={() => onPlay(lv.id)}>
-              <span className="hv-lvbig">{lv.mode === "record" ? "∞" : lv.id + 1}</span>
+              <span className="hv-lvbig">{pack.craft ? "★" : lv.mode === "record" ? "∞" : lv.id + 1}</span>
               <span className="hv-lvinfo">
                 <span className="hv-lvtitle">{lv.name}</span>
                 <span className="hv-lvmeta">
                   {lv.w}×{lv.h} · {lv.mode === "record"
                     ? lv.snakes.length + " змей · рекорд " + rec + (lv.proof === "beam" ? ", машина " : " из ") + lv.ceiling
-                    : "цель ≥ " + lv.target}
+                    : "цель ≥ " + lv.target}{pack.craft ? " · " + lv.preset : ""}
                 </span>
               </span>
               <span className="hv-lvstars">
-                {[0, 1, 2].map((i) => (
+                {pack.craft ? (
+                  <>
+                    <span className="hv-mini" role="button" tabIndex={0}
+                      onClick={(e) => { e.stopPropagation(); onDrop("copy", lv.id); }}><Copy size={14} /></span>
+                    <span className="hv-mini" role="button" tabIndex={0}
+                      onClick={(e) => { e.stopPropagation(); onDrop("drop", lv.id); }}><Trash2 size={14} /></span>
+                  </>
+                ) : [0, 1, 2].map((i) => (
                   <Star key={i} size={14}
                     fill={i < got ? "#EFAF3C" : "none"}
                     color={i < got ? "#EFAF3C" : "#41544A"} />
@@ -1541,7 +1632,67 @@ export default function App() {
   const [records, setRecords] = useState(() => {
     try { return JSON.parse(localStorage.getItem("hv-records") || "{}"); } catch (e) { return {}; }
   });
-  const pack = PACKS[packIdx];
+  const [crafted, setCrafted] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("hv-crafted") || "[]"); } catch (e) { return []; }
+  });
+  const [busy, setBusy] = useState(null);
+  const [note, setNote] = useState(null);
+
+  const saveCrafted = (next) => {
+    setCrafted(next);
+    try { localStorage.setItem("hv-crafted", JSON.stringify(next)); } catch (e) {}
+  };
+
+  // Крутим попытки по одной, отдавая управление интерфейсу между ними, — иначе
+  // экран замирает на секунды и кажется, что игра повисла.
+  async function craft(name) {
+    if (busy) return;
+    setNote(null);
+    let made = null, tries = 0;
+    const ordinal = crafted.filter((c) => c.preset === name).length + 1;
+    // пачками по 6: пауза между ними у браузера всё равно не короче ~4 мс,
+    // а перерисовка счётчика на каждую попытку сама по себе дороже попытки
+    outer:
+    for (let round = 0; round < 24; round++) {
+      setBusy({ preset: name, tries });
+      await new Promise((r) => setTimeout(r, 0));
+      for (let b = 0; b < 6; b++) {
+        tries++;
+        const seed = ((Date.now() + tries * 7919) >>> 0) || 1;
+        let r;
+        try { r = craftOnce(name, seed); } catch (e) { continue; }
+        if (!r.level) continue;
+        const c = acceptCrafted(name, r, ordinal);
+        if (c) { made = c; break outer; }
+      }
+    }
+    setBusy(null);
+    if (made) { saveCrafted([...crafted, made]); setNote(`Готово: ${made.name}.`); }
+    else setNote(`За ${tries} попыток ничего не прошло приёмку. Нажми ещё раз.`);
+  }
+
+  function onDrop(action, id) {
+    const c = crafted[id];
+    if (!c) return;
+    if (action === "copy") {
+      const text = craftedToText(c);
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(
+        () => setNote(`«${c.name}» скопирован — можно прислать.`),
+        () => setNote("Скопировать не вышло: браузер не дал доступ к буферу."));
+      else setNote("Этот браузер не даёт доступ к буферу обмена.");
+      return;
+    }
+    saveCrafted(crafted.filter((_, i) => i !== id));
+    setNote(`«${c.name}» выброшен.`);
+  }
+
+  const craftLevels = useMemo(() => crafted.map(craftedToLevel), [crafted]);
+  const packs = useMemo(() => PACKS.concat([{
+    id: "craft", craft: true, name: "Мастерская",
+    note: crafted.length ? crafted.length + " своих уровня" : "генератор уровней",
+    levels: craftLevels,
+  }]), [craftLevels, crafted.length]);
+  const pack = packs[packIdx];
   const levels = pack.levels;
   const recKey = pack.id + ":" + idx;
   const saveRecord = (len) => setRecords((p) => {
@@ -1556,16 +1707,22 @@ export default function App() {
       <style>{CSS_TEXT}</style>
       {screen === "menu" ? (
         <Menu
+          packs={packs}
           stars={stars}
           records={records}
           packIdx={packIdx}
-          onPack={(i) => { setPackIdx(i); setIdx(0); }}
+          crafted={crafted}
+          busy={busy}
+          note={note}
+          onCraft={craft}
+          onDrop={onDrop}
+          onPack={(i) => { setPackIdx(i); setIdx(0); setNote(null); }}
           onPlay={(i) => { setIdx(i); setScreen("game"); }}
         />
       ) : (
         <Game
           key={pack.id + ":" + idx}
-          level={levels[idx]}
+          level={levels[Math.min(idx, levels.length - 1)]}
           record={records[recKey] || 0}
           onRecord={saveRecord}
           onExit={() => setScreen("menu")}
@@ -1619,6 +1776,19 @@ const CSS_TEXT = `
 .hv-hintn{position:absolute;top:1px;right:1px;min-width:14px;height:14px;line-height:14px;
   border-radius:7px;background:#EFAF3C;color:#0F1A12;font-size:9px;font-weight:800;padding:0 3px;}
 .hv-hintnote{margin-top:8px;font-size:12px;color:#EFAF3C;}
+.hv-shop{margin-bottom:12px;}
+.hv-shopline{font-size:12px;color:#9FB29B;line-height:1.45;margin-bottom:9px;}
+.hv-presets{display:grid;grid-template-columns:1fr 1fr;gap:7px;}
+.hv-preset{display:flex;flex-direction:column;align-items:flex-start;gap:2px;font:inherit;
+  font-size:13px;font-weight:800;color:#F3F0E4;background:#1B2A1F;border:1px solid #2C3E30;
+  border-radius:12px;padding:9px 11px;cursor:pointer;text-align:left;}
+.hv-preset:disabled{opacity:.45;}
+.hv-preset svg{vertical-align:-2px;margin-right:4px;color:#9CCB3B;}
+.hv-presetmeta{font-size:10px;font-weight:600;color:#8C9E88;text-transform:none;}
+.hv-shopstatus{margin-top:9px;font-size:12px;color:#EFAF3C;}
+.hv-shopempty{font-size:12px;color:#8C9E88;padding:10px 2px;}
+.hv-mini{display:inline-flex;padding:5px;border-radius:8px;color:#8C9E88;}
+.hv-mini:active{background:#243527;color:#F3F0E4;}
 .hv-fill{height:100%;border-radius:8px;background:linear-gradient(90deg,#58A942,#9CCB3B);transition:width .35s ease;}
 .hv-count{font-size:13px;font-weight:600;color:#B9C8B4;min-width:52px;text-align:right;font-variant-numeric:tabular-nums;}
 .hv-slack{font-size:12px;color:#9FB29B;background:#1B2A1F;border:1px solid #2C3E30;border-radius:10px;
