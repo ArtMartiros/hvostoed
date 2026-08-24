@@ -32,6 +32,8 @@ jobs:
         run: node records.mjs hvostoed.jsx
       - name: Подсказка доводит до цели и до потолка
         run: node hints.mjs hvostoed.jsx
+      - name: Правило конца партии
+        run: node ending.mjs hvostoed.jsx
 
   build:
     name: Сборка

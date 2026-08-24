@@ -92,3 +92,63 @@ export function beamBest(lv, width) {
   }
   return { best, moves };
 }
+
+/* Мемоизированный «достижима ли ещё цель». Граф ациклический: число змей
+   строго убывает с каждым ходом, значит рекурсия конечна без счётчика глубины. */
+export function winner(lv, target) {
+  const memo = new Map();
+  const win = (st) => {
+    if (G.maxLen(st) >= target) return true;
+    const k = stKey(st);
+    if (memo.has(k)) return memo.get(k);
+    let r = false;
+    for (const m of G.movesOf(st, lv.w, lv.h)) {
+      if (win(m.eat ? G.applyEat(st, m.i, m.ray) : st.filter((_, i) => i !== m.i))) { r = true; break; }
+    }
+    memo.set(k, r); return r;
+  };
+  return win;
+}
+
+/* Профиль сложности ВДОЛЬ ЗАДУМАННОГО решения: на каждом ходу — сколько тапов
+   доступно, сколько из них убивают и какой зазор у верного. Построение задаёт
+   только зазоры, поэтому кривую риска надо мерить по факту, а не верить плану. */
+const tiltOf = (a) => {
+  const s = a.reduce((x, y) => x + y, 0);
+  if (!s || a.length < 2) return 0.5;
+  return a.reduce((x, y, i) => x + i * y, 0) / ((a.length - 1) * s);
+};
+
+export function curve(lv, target) {
+  const win = target ? winner(lv, target) : null;
+  let st = lv.snakes.map((s) => ({ id: s.id, cells: s.cells.map((c) => c.slice()) }));
+  const rows = [];
+  for (const mv of lv.moves) {
+    const i = st.findIndex((s) => s.id === mv.eater);
+    if (i < 0) return null;
+    const ray = G.raycast(st, i, lv.w, lv.h);
+    if (ray.kind !== 'tail') return null;
+    const opts = G.movesOf(st, lv.w, lv.h);
+    let dead = 0;
+    if (win) for (const m of opts) {
+      const nx = m.eat ? G.applyEat(st, m.i, m.ray) : st.filter((_, j) => j !== m.i);
+      if (!win(nx)) dead++;
+    }
+    rows.push({ branch: opts.length, gap: ray.gap, dead: opts.length ? dead / opts.length : 0 });
+    st = G.applyEat(st, i, ray);
+  }
+  const gaps = rows.map((r) => r.gap);
+  let run = 0, runMax = 0;
+  for (const g of gaps) { if (g > 0) { run++; runMax = Math.max(runMax, run); } else run = 0; }
+  const want = lv.want || [];
+  return {
+    rows, gaps,
+    voids: gaps.reduce((a, b) => a + b, 0),
+    voidMiss: want.length ? Math.abs(gaps.reduce((a, b) => a + b, 0) - want.reduce((a, b) => a + b, 0)) : 0,
+    runMax, restShare: gaps.filter((g) => g === 0).length / Math.max(1, gaps.length),
+    tiltWant: want.length ? tiltOf(want) : 0.5,
+    tiltGap: tiltOf(gaps),
+    tiltRisk: win ? tiltOf(rows.map((r) => r.dead)) : null,
+    tiltBranch: tiltOf(rows.map((r) => r.branch)),
+  };
+}

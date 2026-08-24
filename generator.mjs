@@ -189,35 +189,79 @@ function unEat(rnd, cfg, state, si, opt) {
   return { state: next, move: { eater: A.id, prey: B.id, gap: k }, gapCells };
 }
 
+/* ---------- раскладка пустот по ходам ----------
+   Бюджет `voids` — суммарная длина зазоров за всё решение. Он равен тому,
+   насколько след решения больше цели: масса на поле обед сохраняет, поэтому
+   зазоры двигают не плотность, а разброс.
+
+   Огибающая — треугольник с вершиной в `peak` (1 — разгон до финала, 0.6 —
+   перевал в середине, дальше дособирается легко). Передышки — ходы вплотную,
+   ставятся каждый `breather`-й НЕЗАВИСИМО от огибающей: очевидный ход нужен
+   как выдох, а не как «лёгкий среди лёгких» в начале уровня. */
+export function gapPlan(M, budget, peak, breather, maxGap) {
+  const rest = new Set();
+  if (breather > 0) for (let i = 1; i < M - 1; i += breather) rest.add(i);   // финал не передышка
+  const p = Math.min(1, Math.max(0.02, peak == null ? 1 : peak));
+  const w = [];
+  for (let i = 0; i < M; i++) {
+    const x = M === 1 ? p : i / (M - 1);
+    w.push(rest.has(i) ? 0 : 0.15 + 0.85 * (x <= p ? x / p : (1 - x) / (1 - p)));
+  }
+  // делим бюджет пропорционально огибающей, метод наибольшего остатка
+  let sum = w.reduce((a, b) => a + b, 0);
+  if (sum <= 0) return w.map(() => 0);
+  let want = w.map((v) => (budget * v) / sum);
+  for (let pass = 0; pass < 4; pass++) {       // излишек сверх maxGap раздаём остальным
+    let over = 0, room = 0;
+    want.forEach((v, i) => { if (v > maxGap) over += v - maxGap; else if (!rest.has(i)) room += maxGap - v; });
+    if (over < 1e-9 || room < 1e-9) break;
+    want = want.map((v, i) => (v > maxGap ? maxGap : (rest.has(i) ? v : v + (over * (maxGap - v)) / room)));
+  }
+  const base = want.map((v) => Math.floor(v));
+  let left = Math.round(budget) - base.reduce((a, b) => a + b, 0);
+  const order = want.map((v, i) => ({ i, frac: v - Math.floor(v) }))
+    .filter((o) => !rest.has(o.i)).sort((a, b) => b.frac - a.frac);
+  for (const o of order) { if (left <= 0) break; if (base[o.i] < maxGap) { base[o.i]++; left--; } }
+  return base;
+}
+
 /* ---------- сборка уровня ---------- */
 export function generate(cfg) {
   const rnd = makeRng(cfg.seed);
-  cfg = { maxGap: 3, tailStraight: 0.6, branch: 0.5, straightBias: 0.55, decoys: 0, ...cfg, _nextId: 1 };
+  cfg = { maxGap: 3, tailStraight: 0.6, branch: 0.5, straightBias: 0.55, decoys: 0,
+          peak: 1, breather: 3, ...cfg, _nextId: 1 };
   const final = walk(rnd, cfg.w, cfg.h, cfg.len, new Set(), null, null, cfg.straightBias);
   if (!final) return null;
+
+  const M = cfg.moves;
+  const want = gapPlan(M, cfg.voids == null ? M : cfg.voids, cfg.peak, cfg.breather, cfg.maxGap);
 
   let state = [{ id: cfg._nextId++, cells: final }];
   const moves = [];
   const forbidden = new Set(final.map(ck));
+  let debt = 0;                                 // недобор зазоров, размазываем по оставшимся ходам
 
-  for (let step = 0; step < cfg.moves; step++) {
-    // кого резать: с вероятностью branch — случайную змею, иначе самую длинную
+  for (let step = 0; step < M; step++) {
+    const f = M - 1 - step;                     // строим с конца: шаг 0 — последний ход решения
+    const isRest = want[f] === 0 && cfg.breather > 0;
+    const aim = isRest ? 0
+      : Math.max(0, Math.min(cfg.maxGap, Math.round(want[f] + debt / (f + 1))));
+    // кого резать: с вероятностью branch — случайную змею, иначе самую длинную.
+    // Но целевой зазор важнее: сначала ищем ход с нужным k СРЕДИ ВСЕХ ЗМЕЙ,
+    // и лишь при равном k предпочитаем змею по порядку. Иначе бюджет не выбирается:
+    // у выбранной наугад змеи может просто не оказаться длинной прямой под зазор.
     const order = rnd() < cfg.branch
       ? shuffled(rnd, state.map((_, i) => i))
       : state.map((_, i) => i).sort((a, b) => state[b].cells.length - state[a].cells.length);
+    const rank = new Map(order.map((si, r) => [si, r]));
+    const cand = [];
+    for (const si of order)
+      for (const opt of shuffled(rnd, splitOptions(state[si], cfg.maxGap))) cand.push({ si, opt });
+    cand.sort((a, b) => (Math.abs(a.opt.k - aim) - Math.abs(b.opt.k - aim)) || (rank.get(a.si) - rank.get(b.si)));
     let done = null;
-    for (const si of order) {
-      const opts = shuffled(rnd, splitOptions(state[si], cfg.maxGap));
-      if (!opts.length) continue;
-      // тянем к зазорам: они и дают дальние выстрелы, и двигают хвост
-      opts.sort((a, b) => (rnd() < cfg.gapPull ? b.k - a.k : 0));
-      for (const opt of opts) {
-        const r = unEat(rnd, cfg, state, si, opt);
-        if (r) { done = r; break; }
-      }
-      if (done) break;
-    }
+    for (const c of cand) { const r = unEat(rnd, cfg, state, c.si, c.opt); if (r) { done = r; break; } }
     if (!done) break;
+    if (!isRest) debt += want[f] - done.move.gap;
     state = done.state;
     moves.unshift(done.move);
     for (const s of state) for (const c of s.cells) forbidden.add(ck(c));
@@ -235,7 +279,8 @@ export function generate(cfg) {
     for (const c of d) forbidden.add(ck(c));
   }
   state = state.concat(decoys);
-  return { w: cfg.w, h: cfg.h, snakes: state, moves, len: cfg.len, decoys: decoys.length };
+  return { w: cfg.w, h: cfg.h, snakes: state, moves, len: cfg.len, decoys: decoys.length,
+           voids: moves.reduce((a, m) => a + m.gap, 0), want, peak: cfg.peak, breather: cfg.breather };
 }
 
 /* ---------- обязательная проверка вперёд ---------- */

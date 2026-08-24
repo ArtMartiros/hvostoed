@@ -1,23 +1,37 @@
 /* Конфиги уровней. Ручки постройки + коридоры приёмки.
    Жёсткое (решаемость, длина решения) даёт обратное построение; здесь только мягкое.
-   Два правила, оплаченные временем: критерии — это СЧЁТЧИКИ и живучесть, а не доли
-   (долю дальних ходов легко довести до 100%, сделав поле неиграбельным), и очевидные
-   ходы нельзя гнать в ноль — один-два на ход нужны как передышка. */
+   Правила, оплаченные временем: критерии — это СЧЁТЧИКИ и живучесть, а не доли
+   (долю дальних ходов легко довести до 100%, сделав поле неиграбельным); очевидные
+   ходы нельзя гнать в ноль — один-два на ход нужны как передышка; и наклон сложности
+   надо ПЕРЕМЕРИВАТЬ по факту, потому что построение задаёт только зазоры.
+
+   voids — суммарная длина пустот за решение, равна тому, насколько след решения
+   больше цели. Потолок структурный: разрез с зазором k требует змеи длиной ≥ k+3,
+   а к концу обратной прогулки куски короткие. Практически Σ ≲ 0.5·len. */
 import * as G from './generator.mjs';
 import * as S from './levelstats.mjs';
 
 export const PRESETS = {
-  ученик:   { w: 7,  h: 7,  len: 14, moves: 4,  maxGap: 2, gapPull: 0.5, decoys: 2, decoyMax: 3,
-              min: { decoyLive: 1, safety: 0.75, sols: 2, branch: 2 }, max: { branch: 5 } },
-  средний:  { w: 9,  h: 9,  len: 22, moves: 6,  maxGap: 3, gapPull: 0.7, decoys: 3, decoyMax: 4,
-              min: { decoyLive: 1, safety: 0.65, sols: 3, branch: 2.5, farShare: 0.5 }, max: { branch: 6 } },
-  длинный:  { w: 10, h: 11, len: 34, moves: 9,  maxGap: 3, gapPull: 0.7, decoys: 4, decoyMax: 5,
-              min: { decoyLive: 0.75, safety: 0.6, sols: 3, branch: 3, farShare: 0.5 }, max: { branch: 7 } },
-  пустоты:  { w: 10, h: 11, len: 30, moves: 8,  maxGap: 4, gapPull: 0.95, decoys: 5, decoyMax: 4,
-              min: { decoyLive: 0.75, safety: 0.6, sols: 2, branch: 2.5, farShare: 0.7, avgGap: 1.3 }, max: { branch: 7 } },
-  простор:  { w: 12, h: 16, len: 52, moves: 13, maxGap: 4, gapPull: 0.9, decoys: 8, decoyMax: 5,
-              record: true,
-              min: { decoyLive: 0.6, branch: 3, farShare: 0.6, avgGap: 1.2, alive: 0.2 }, max: { branch: 8, alive: 0.65 } },
+  ученик:   { w: 7,  h: 7,  len: 14, moves: 4,  maxGap: 3, voids: 5,  peak: 1, breather: 3, straightBias: 0.7,
+              decoys: 2, decoyMax: 3,
+              min: { decoyLive: 1, safety: 0.75, sols: 2, branch: 2 },
+              max: { branch: 5, voidMiss: 2, runMax: 3 } },
+  средний:  { w: 9,  h: 9,  len: 22, moves: 6,  maxGap: 4, voids: 9,  peak: 1, breather: 3, straightBias: 0.7,
+              decoys: 3, decoyMax: 4,
+              min: { decoyLive: 1, safety: 0.65, sols: 3, branch: 2.5, farShare: 0.5 },
+              max: { branch: 6, voidMiss: 3, runMax: 3 } },
+  длинный:  { w: 10, h: 11, len: 34, moves: 9,  maxGap: 5, voids: 14, peak: 1, breather: 3, straightBias: 0.8,
+              decoys: 4, decoyMax: 5,
+              min: { decoyLive: 0.75, safety: 0.6, sols: 3, branch: 3, farShare: 0.5 },
+              max: { branch: 7, voidMiss: 4, runMax: 3 } },
+  пустоты:  { w: 10, h: 11, len: 30, moves: 8,  maxGap: 5, voids: 16, peak: 1, breather: 3, straightBias: 0.85,
+              decoys: 5, decoyMax: 4,
+              min: { decoyLive: 0.75, safety: 0.6, sols: 2, branch: 2.5, farShare: 0.7, avgGap: 1.3 },
+              max: { branch: 7, voidMiss: 4, runMax: 3 } },
+  простор:  { w: 12, h: 16, len: 52, moves: 13, maxGap: 5, voids: 26, peak: 1, breather: 3, straightBias: 0.8,
+              decoys: 8, decoyMax: 5, record: true,
+              min: { decoyLive: 0.6, branch: 3, farShare: 0.6, avgGap: 1.2, alive: 0.2 },
+              max: { branch: 8, alive: 0.65, voidMiss: 6, runMax: 3 } },
 };
 
 function check(p, m) { return checkSome(p, m, true).concat(checkSome(p, m, false)); }
@@ -45,12 +59,19 @@ function decoyLiveness(lv) {
    в основном по форме, обходились в секунды на уровень. */
 export function measureCheap(lv, preset) {
   const sh = S.shape(lv, preset.record ? 120 : 50, lv.len * 7 + 1);
+  const cv = S.curve(lv, null) || {};
   return { decoyLive: decoyLiveness(lv), starts: sh.starts, branch: sh.branch,
+    voids: cv.voids, voidMiss: cv.voidMiss, runMax: cv.runMax, restShare: cv.restShare,
+    tiltWant: cv.tiltWant, tiltGap: cv.tiltGap, gaps: cv.gaps,
     farShare: sh.farShare, avgGap: sh.avgGap, randMed: sh.randMed, randTop: sh.randTop,
     mass: G.totalMass(lv.snakes), snakes: lv.snakes.length, target: lv.len, moves: lv.moves.length };
 }
 
 export function measureDeep(lv, preset, m) {
+  // наклон риска меряем отдельно: построение задаёт зазоры, а не число способов ошибиться
+  const cv = S.curve(lv, lv.len);
+  if (cv) { m.tiltRisk = cv.tiltRisk; m.endRisk = cv.rows[cv.rows.length - 1].dead;
+            m.risks = cv.rows.map((r) => r.dead); }
   if (preset.record) {
     const bm = S.beamBest(lv, 160);
     m.ceiling = bm.best; m.bestMoves = bm.moves;
@@ -70,7 +91,7 @@ export function measure(lv, preset) {
 }
 
 // какие поля проверяются на дешёвом заходе — остальные ждут дорогого
-const CHEAP = new Set(['decoyLive', 'starts', 'branch', 'farShare', 'avgGap']);
+const CHEAP = new Set(['decoyLive', 'starts', 'branch', 'farShare', 'avgGap', 'voidMiss', 'runMax', 'tiltGap', 'restShare']);
 function checkSome(p, m, cheapOnly) {
   const fail = [];
   for (const [k, v] of Object.entries(p.min || {})) {

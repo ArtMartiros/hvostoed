@@ -908,6 +908,30 @@ function planLongest(level, snakes, rockSet) {
   return path;
 }
 
+/* Может ли самая длинная змея ещё вырасти. Ответ точный, а не «есть ли обед»:
+   выпуск сам по себе не растит, но убирает змею с поля и может открыть луч,
+   который был перекрыт. Число змей строго убывает с каждым ходом, значит граф
+   ациклический и обход конечен. Бюджет узлов — предохранитель: не доказали за
+   отведённое, отвечаем «может». Закончить партию раньше времени хуже, чем дать
+   лишний ход по мёртвому полю. */
+function canGrow(level, snakes, rockSet, base) {
+  const seen = new Set([stateKey(snakes)]);
+  const stack = [snakes];
+  let visited = 0;
+  while (stack.length) {
+    if (++visited > 20000) return true;
+    const st = stack.pop();
+    for (const m of legalMoves(st, level.w, level.h, rockSet)) {
+      if (maxLen(m.next) > base) return true;
+      const k = stateKey(m.next);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      stack.push(m.next);
+    }
+  }
+  return false;
+}
+
 function buildEatMove(snakes, sid, ray) {
   const eater = snakes.find((s) => s.id === sid);
   const prey = snakes.find((s) => s.id === ray.target);
@@ -1165,21 +1189,30 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
     }
     const ml = maxLen(mv.finalSnakes);
     if (ml > runBest) { setRunBest(ml); if (isRec && hintsRef.current === 0) onRecord(ml); }
-    if (!isRec && ml >= level.target) {
-      const stars = 1 + (mv.launchedAfter === 0 ? 1 : 0) + (mv.finalSnakes.length === 1 ? 1 : 0);
-      setWonInfo({ len: ml, stars, ateAll: mv.finalSnakes.length === 1 });
-      setPhase("won");
-      onWin(stars);
+    // Цель — порог, а не финиш: пока змея может расти, партия продолжается.
+    const anyEat = mv.finalSnakes.some((s) => raycast(mv.finalSnakes, s.id, level.w, level.h, rockSet).kind === "tail");
+    if (!anyEat && !canGrow(level, mv.finalSnakes, rockSet, ml)) {
+      finish(mv.finalSnakes, ml, mv.launchedAfter);
       return;
     }
-    const anyEat = mv.finalSnakes.some((s) => raycast(mv.finalSnakes, s.id, level.w, level.h, rockSet).kind === "tail");
-    const anyLaunch = mv.finalSnakes.some((s) => raycast(mv.finalSnakes, s.id, level.w, level.h, rockSet).kind === "edge");
-    if (!anyEat && !anyLaunch) {
-      if (isRec) { setPhase("done"); return; }
-      setLostReason("Все пути закрыты — двигаться некому.");
-      setPhase("lost");
+    setPhase("idle");
+  }
+
+  /* Конец партии — либо рост доказуемо невозможен, либо игрок забрал результат сам.
+     Раньше уровень закрывался в тот миг, когда длина пересекала цель, и добрать
+     остаток поля было нельзя: третья звезда «съедено всё» оказывалась недостижимой
+     на 8 уровнях кампании из 14. */
+  function finish(fin, ml, launchedAfter) {
+    clearTimeout(crashTimerRef.current);
+    if (isRec) { setPhase("done"); return; }
+    if (ml >= level.target) {
+      const stars = 1 + (launchedAfter === 0 ? 1 : 0) + (fin.length === 1 ? 1 : 0);
+      setWonInfo({ len: ml, stars, ateAll: fin.length === 1 });
+      setPhase("won");
+      onWin(stars);
     } else {
-      setPhase("idle");
+      setLostReason("Съесть больше некого — до цели змея уже не дорастёт.");
+      setPhase("lost");
     }
   }
 
@@ -1321,11 +1354,11 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
     const k = stateKey(snakes);
     let sid = planRef.current.get(k);
     if (sid == null) {
-      const plan = isRec
+      const plan = (isRec || best >= level.target)
         ? planLongest(level, snakes, rockSet)
         : (planGoal(level, snakes, rockSet) || planLongest(level, snakes, rockSet));
       if (!plan || !plan.length) {
-        setToast(isRec
+        setToast(isRec || best >= level.target
           ? "Больше не вырасти — партию можно заканчивать."
           : "Отсюда цели уже не достичь. Отмени ход или начни заново.");
         return;
@@ -1360,8 +1393,9 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
     setFx(null); setToast(null); setPlus(null);
   }
 
+  const reached = !isRec && best >= level.target;
   const stuckMsg =
-    idle && (isRec || best < level.target) && !canEatAny && canLaunchAny
+    idle && !canEatAny && canLaunchAny
       ? "Съесть некого. Выпусти змею, чтобы расчистить путь, или закончи партию."
       : null;
 
@@ -1455,7 +1489,8 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
               </div>
               <div className="hv-wontitle">Уровень пройден</div>
               <div className="hv-wonsub">
-                Длина змеи: {wonInfo.len}{wonInfo.ateAll ? " · съедено всё поле" : ""}
+                Длина змеи: {wonInfo.len}{wonInfo.len > level.target ? " — цель " + level.target + " перебита на " + (wonInfo.len - level.target) : ""}
+                {wonInfo.ateAll ? " · съедено всё поле" : ""}
               </div>
               <div className="hv-btnrow">
                 <button className="hv-btn ghost" onClick={restart}>Ещё раз</button>
@@ -1521,7 +1556,12 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
         ) : stuckMsg ? (
           <div className="hv-toast warn">
             {stuckMsg}
-            {isRec ? <button className="hv-endbtn" onClick={() => setPhase("done")}>Закончить</button> : null}
+            <button className="hv-endbtn" onClick={() => finish(snakes, best, launched)}>Закончить</button>
+          </div>
+        ) : reached && idle ? (
+          <div className="hv-toast good">
+            Цель взята: {best}. Добирай остаток поля — или забирай сейчас.
+            <button className="hv-endbtn" onClick={() => finish(snakes, best, launched)}>Забрать</button>
           </div>
         ) : (
           <div className="hv-lesson">{level.lesson}</div>
@@ -1816,6 +1856,7 @@ const CSS_TEXT = `
 .hv-toast{font-size:14px;color:#F3F0E4;background:#22331F;border:1px solid #355030;border-radius:14px;
   padding:10px 14px;line-height:1.4;width:100%;animation:hvfade .25s ease;}
 .hv-toast.warn{background:#33290F;border-color:#5C4A18;color:#F0D9A0;}
+.hv-toast.good{background:#1B3A1B;border-color:#3E6B36;color:#CFEBB4;}
 @keyframes hvfade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .hv-btn{border-radius:13px;border:none;font-family:Rubik,sans-serif;font-weight:800;font-size:14px;
   padding:11px 16px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;}
