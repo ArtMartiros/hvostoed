@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Undo2, RotateCcw, Star, Play, Lightbulb, Wand2, Copy, Trash2, X, Sliders } from "lucide-react";
+import { ChevronLeft, Undo2, RotateCcw, Star, Play, Lightbulb, Wand2, Copy, Trash2, X, Sliders, Flag } from "lucide-react";
 import { PRESETS, craftOnce, voidCeiling } from "./presets.mjs";
+import { encode as encodeShare, CFG_KEYS, REASONS } from "./sharecode.mjs";
 
 /* ================================================================
    ХВОСТОЕД — прототип v3
@@ -753,12 +754,12 @@ const boardOf = (lv) => ({
   turns: new Map((lv.turns || []).map(([x, y, a, b]) => [ckey(x, y), a + b])),
 });
 
-function acceptCrafted(name, r, ordinal) {
+function acceptCrafted(name, r, ordinal, cfg) {
   const lv = r.level, m = r.metrics;
   const snakes = lv.snakes.map((s) =>
     ({ cells: s.cells.map((c) => c.slice()), ...(s.spiky ? { spiky: true } : {}), ...(s.sleep ? { sleep: true } : {}) }));
   const base = { w: lv.w, h: lv.h, snakes, bridges: lv.bridges || [], turns: lv.turns || [],
-                 preset: name, seed: r.seed,
+                 preset: name, seed: r.seed, cfg: knobsOf(cfg),
                  name: name.charAt(0).toUpperCase() + name.slice(1) + " " + ordinal };
   if (r.record) {
     const bd = boardOf(lv);
@@ -791,6 +792,14 @@ function acceptCrafted(name, r, ordinal) {
     lesson: `Цель ${target} за ${ходов(plan.length)} · решений ${m.sols} · безопасных тапов ${Math.round(100 * m.safety)}%`
       + (marks.length ? " · " + marks.join(", ") : "") };
 }
+
+// значения ручек в порядке, который понимает код обмена
+const knobsOf = (c) => {
+  if (!c) return null;
+  const out = {};
+  for (const k of CFG_KEYS) out[k] = k === "peak100" ? Math.round((c.peak == null ? 1 : c.peak) * 100) : (c[k] || 0);
+  return out;
+};
 
 const craftedToLevel = (c, i) => {
   const raw = { ...c, rocks: [], bridges: c.bridges || [], turns: c.turns || [] };
@@ -1279,7 +1288,7 @@ function RayView({ ray, from, color }) {
 }
 
 /* ---------- игра ---------- */
-function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
+function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare }) {
   const isRec = level.mode === "record";
   const [snakes, setSnakes] = useState(() => clone(level.snakes));
   const [runBest, setRunBest] = useState(() => maxLen(level.snakes));
@@ -1287,6 +1296,15 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
   const hintsRef = useRef(0);          // commit читает счётчик синхронно, состояние туда не успевает
   const planRef = useRef(new Map());   // состояние поля -> змея, по которой надо тапнуть
   const [history, setHistory] = useState([]);
+  // журнал партии: без него присланный уровень почти ничего не говорит — важно
+  // не «уровень плохой», а на каком ходу человек свернул и что нажимал
+  const [log, setLog] = useState([]);
+  const lastTryRef = useRef(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const send = (reason) => {
+    setShareOpen(false);
+    onShare({ reason, played: log, lastTry: lastTryRef.current });
+  };
   const [launched, setLaunched] = useState(0);
   const [phase, setPhase] = useState("idle"); // idle | anim | crash | won | lost | done
   const [fx, setFx] = useState(null);
@@ -1478,6 +1496,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
     if (phase !== "idle") return;
     setToast(null); setFx(null);
     const s = snakes.find((q) => q.id === sid);
+    lastTryRef.current = sid;
     if (s.sleep) { setToast("Спящая змея не ходит — её можно только съесть."); return; }
     const ray = raycast(snakes, sid, level.w, level.h, board);
     const nom = COLORS[s.color].nom;
@@ -1486,11 +1505,13 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
       const mv = buildEatMove(snakes, sid, ray);
       mv.launchedAfter = launched;
       setHistory((hh) => [...hh, { snakes: clone(snakes), launched, runBest }]);
+      setLog((l) => [...l, sid]);
       runMove(mv);
     } else if (ray.kind === "edge") {
       const mv = buildLaunchMove(snakes, sid, ray);
       mv.launchedAfter = launched + 1;
       setHistory((hh) => [...hh, { snakes: clone(snakes), launched, runBest }]);
+      setLog((l) => [...l, sid]);
       setLaunched((n) => n + 1);
       runMove(mv);
     } else if (ray.kind === "self") {
@@ -1558,6 +1579,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
     if (!history.length) return;
     const last = history[history.length - 1];
     setHistory((hh) => hh.slice(0, -1));
+    setLog((l) => l.slice(0, -1));
     setSnakes(last.snakes);
     setLaunched(last.launched);
     setRunBest(last.runBest != null ? last.runBest : maxLen(last.snakes));
@@ -1568,7 +1590,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
   function restart() {
     if (phase === "anim") return;
     clearTimeout(crashTimerRef.current);
-    setSnakes(clone(level.snakes)); setHistory([]); setLaunched(0); setRunBest(maxLen(level.snakes));
+    setSnakes(clone(level.snakes)); setHistory([]); setLog([]); setLaunched(0); setRunBest(maxLen(level.snakes));
     hintsRef.current = 0; setHints(0); planRef.current = new Map();
     setPhase("idle"); setWonInfo(null); setLostReason(null); setCrashed(false);
     setFx(null); setToast(null); setPlus(null);
@@ -1604,6 +1626,9 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
         </button>
         <button className="hv-icon" onClick={restart} disabled={phase === "anim"} aria-label="Заново">
           <RotateCcw size={19} />
+        </button>
+        <button className="hv-icon" onClick={() => setShareOpen(true)} aria-label="Отправить уровень">
+          <Flag size={18} />
         </button>
       </header>
 
@@ -1677,6 +1702,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
                 {wonInfo.ateAll ? " · съедено всё поле" : ""}
               </div>
               <div className="hv-btnrow">
+                <button className="hv-btn ghost good" onClick={() => send(0)}><Star size={14} /> Нравится</button>
                 <button className="hv-btn ghost" onClick={restart}>Ещё раз</button>
                 {hasNext
                   ? <button className="hv-btn main" onClick={onNext}><Play size={16} /> Дальше</button>
@@ -1712,12 +1738,32 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
           </div>
         )}
 
+        {shareOpen && (
+          <div className="hv-overlay" onClick={() => setShareOpen(false)}>
+            <div className="hv-card" onClick={(e) => e.stopPropagation()}>
+              <div className="hv-wontitle">Отправить уровень</div>
+              <div className="hv-wonsub">
+                Уйдёт доска и твои ходы ({log.length}) — этого хватает, чтобы повторить партию клетка в клетку.
+              </div>
+              <div className="hv-reasons">
+                {REASONS.map((nom, i) => (
+                  <button key={nom} className={"hv-btn ghost" + (i === 0 ? " good" : "")}
+                    onClick={() => send(i)}>{i === 0 ? "★ " : ""}{nom}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {phase === "lost" && (
           <div className="hv-overlay">
             <div className="hv-card">
               <div className="hv-wontitle lost">{crashed ? "Авария!" : "Не вышло"}</div>
               <div className="hv-wonsub">{lostReason}</div>
               <div className="hv-btnrow">
+                <button className="hv-btn ghost" onClick={() => send(crashed ? 2 : 1)}>
+                  <Flag size={14} /> Прислать
+                </button>
                 {crashed ? (
                   <button className="hv-btn ghost" onClick={forgiveCrash}>
                     <Undo2 size={15} /> Продолжить
@@ -1930,7 +1976,7 @@ function Rules({ pack, onClose }) {
 }
 
 /* ---------- меню ---------- */
-function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft, onDrop, busy, note, onRules }) {
+function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft, onDrop, busy, note, onRules, inbox, onDump, onClearInbox }) {
   const pack = packs[packIdx];
   return (
     <div className="hv-screen hv-menu">
@@ -1953,6 +1999,13 @@ function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft
       {pack.craft ? (
         <div className="hv-shop">
           <div className="hv-shopline">Пресет — заготовка: открывает настройку, дальше крути ручки. Генератор собирает уровень с конца и проверяет его кодом самой игры.</div>
+          {inbox ? (
+            <div className="hv-inbox">
+              <span>В копилке {уровней(inbox)}</span>
+              <button className="hv-btn ghost" onClick={onDump}><Copy size={13} /> Скопировать всё</button>
+              <button className="hv-btn ghost" onClick={onClearInbox}><Trash2 size={13} /> Очистить</button>
+            </div>
+          ) : null}
           <div className="hv-presets">
             {Object.keys(PRESETS).map((name) => (
               <button key={name} className="hv-preset" disabled={!!busy} onClick={() => onCraft(name)}>
@@ -2031,6 +2084,9 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("hv-craftcfg") || "{}"); } catch (e) { return {}; }
   });
   const abortRef = useRef(false);
+  const [inbox, setInbox] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("hv-inbox") || "[]"); } catch (e) { return []; }
+  });
   // Правила на главной больше не висят: тому, кто их прочёл, они не нужны ни разу.
   // Но первому встречному нужны, поэтому один раз показываем сами.
   const [rules, setRules] = useState(() => {
@@ -2090,7 +2146,7 @@ export default function App() {
         let r;
         try { r = craftOnce(cfg || name, seed); } catch (e) { bump("генератор споткнулся"); continue; }
         if (!r.level) { bump(whyNom(r.fail)); continue; }
-        const c = acceptCrafted(name, r, ordinal);
+        const c = acceptCrafted(name, r, ordinal, cfg || PRESETS[name]);
         if (!c) { bump("игра не подтвердила решение"); continue; }
         made = c; break outer;
       }
@@ -2107,6 +2163,42 @@ export default function App() {
         rows: Object.entries(why).sort((a, b) => b[1] - a[1]).slice(0, 4) });
     }
   }
+  /* Копилка партий. Уровень сам по себе почти ничего не рассказывает — присылать
+     надо ПАРТИЮ: доску плюс ходы игрока плюс за что он её прислал. Тогда она
+     воспроизводится клетка в клетку, и вопрос «почему не проходится» становится
+     разбираемым, а не спорным. */
+  function toClipboard(text, okMsg) {
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(
+      () => setNote(okMsg),
+      () => setNote("Скопировать не вышло: браузер не дал доступ к буферу."));
+    else setNote("Этот браузер не даёт доступ к буферу обмена.");
+  }
+
+  function onShare(lv, info) {
+    const pi = Object.keys(PRESETS).indexOf(lv.preset);
+    let code;
+    try {
+      code = encodeShare({ level: lv, played: info.played, lastTry: info.lastTry,
+        reason: info.reason, seed: lv.seed || 0, presetIdx: pi < 0 ? null : pi, cfg: lv.cfg });
+    } catch (e) { setNote("Уровень не закодировался: " + e.message); return; }
+    const next = [...inbox, { code, reason: info.reason, name: lv.name || "уровень" }];
+    setInbox(next);
+    try { localStorage.setItem("hv-inbox", JSON.stringify(next)); } catch (e) {}
+    toClipboard(code, `В копилке ${уровней(next.length)} · «${REASONS[info.reason]}» скопировано.`);
+  }
+
+  function dumpInbox() {
+    if (!inbox.length) return;
+    toClipboard(inbox.map((r) => `${REASONS[r.reason]} · ${r.name}\n${r.code}`).join("\n\n"),
+      `Скопировано ${уровней(inbox.length)} — вставляй в чат целиком.`);
+  }
+
+  function clearInbox() {
+    setInbox([]);
+    try { localStorage.removeItem("hv-inbox"); } catch (e) {}
+    setNote("Копилка очищена.");
+  }
+
   function onDrop(action, id) {
     const c = crafted[id];
     if (!c) return;
@@ -2168,6 +2260,9 @@ export default function App() {
           onPack={(i) => { setPackIdx(i); setIdx(0); setNote(null); }}
           onPlay={(i) => { setIdx(i); setScreen("game"); }}
           onRules={() => setRules(true)}
+          inbox={inbox.length}
+          onDump={dumpInbox}
+          onClearInbox={clearInbox}
         />
       ) : (
         <Game
@@ -2182,6 +2277,7 @@ export default function App() {
           })}
           onNext={() => setIdx((i) => Math.min(i + 1, levels.length - 1))}
           hasNext={idx < levels.length - 1}
+          onShare={(info) => onShare(levels[Math.min(idx, levels.length - 1)], info)}
         />
       )}
     </div>
@@ -2335,6 +2431,11 @@ body{overflow-x:hidden;-webkit-text-size-adjust:100%;}
 .hv-squiggle{width:210px;margin:6px 0 12px;}
 .hv-squigpath{stroke-dasharray:300;stroke-dashoffset:300;animation:hvdraw 1.1s .15s ease forwards;}
 @keyframes hvdraw{to{stroke-dashoffset:0;}}
+.hv-reasons{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px;}
+.hv-btn.ghost.good{border-color:#4E7A3A;color:#B9DDA6;}
+.hv-inbox{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;
+  margin-top:12px;padding:10px 12px;border:1px dashed #3C5A44;border-radius:14px;
+  font-size:12.5px;color:#9FB29B;}
 .hv-help{position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:50%;
   background:#1B2A1F;border:1px solid #35503C;color:#8AA089;font:600 15px Rubik,sans-serif;
   cursor:pointer;padding:0;}
