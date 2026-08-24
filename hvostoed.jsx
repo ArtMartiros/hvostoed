@@ -23,6 +23,7 @@ const COLORS = {
   red:    { fill: "#E05548", dark: "#A93327", nom: "красная",    gen: "красной" },
   spiky:  { fill: "#8A9163", dark: "#535A33", nom: "колючая",    gen: "колючей" },
   sleepy: { fill: "#7E8BA3", dark: "#4E5970", nom: "спящая",     gen: "спящей" },
+  apple:  { fill: "#D8402F", dark: "#9B241A", nom: "яблоко",     gen: "яблока" },
 };
 const ORDER = ["green", "blue", "orange", "plum", "pink", "teal", "red"];
 
@@ -690,6 +691,7 @@ const paintPack = (lv) => {
   const colors = [];
   let ci = 0;
   lv.snakes.forEach((s, si) => {
+    if (s.apple) { colors[si] = "apple"; return; }
     if (s.spiky) { colors[si] = "spiky"; return; }
     if (s.sleep) { colors[si] = "sleepy"; return; }
     const taken = new Set([...near[si]].map((o) => colors[o]).filter(Boolean));
@@ -716,7 +718,8 @@ const buildPack = (raw, mode) =>
         id: "s" + si,
         color: colors[si],
         spiky: !!s.spiky,
-        sleep: !!s.sleep,
+        sleep: !!s.sleep || !!s.apple,
+        apple: !!s.apple,
         cells: s.cells,
       })),
     };
@@ -757,7 +760,8 @@ const boardOf = (lv) => ({
 function acceptCrafted(name, r, ordinal, cfg) {
   const lv = r.level, m = r.metrics;
   const snakes = lv.snakes.map((s) =>
-    ({ cells: s.cells.map((c) => c.slice()), ...(s.spiky ? { spiky: true } : {}), ...(s.sleep ? { sleep: true } : {}) }));
+    ({ cells: s.cells.map((c) => c.slice()), ...(s.spiky ? { spiky: true } : {}),
+       ...(s.sleep ? { sleep: true } : {}), ...(s.apple ? { apple: true } : {}) }));
   const base = { w: lv.w, h: lv.h, snakes, bridges: lv.bridges || [], turns: lv.turns || [],
                  preset: name, seed: r.seed, cfg: knobsOf(cfg),
                  name: name.charAt(0).toUpperCase() + name.slice(1) + " " + ordinal };
@@ -784,8 +788,9 @@ function acceptCrafted(name, r, ordinal, cfg) {
   if (got.bad || got.len < target) return null;
   const plan = got.steps;
   const marks = [];
+  if (snakes.some((s) => s.apple)) marks.push("яблоко даёт +1");
   if (snakes.some((s) => s.spiky)) marks.push("колючую не съесть");
-  if (snakes.some((s) => s.sleep)) marks.push("спящая не ходит");
+  if (snakes.some((s) => s.sleep && !s.apple)) marks.push("спящая не ходит");
   if ((base.bridges || []).length) marks.push("над мостом луч проходит");
   if ((base.turns || []).length) marks.push("колено загибает луч");
   return { ...base, mode: "goal", target, plan: sids,
@@ -806,7 +811,8 @@ const craftedToLevel = (c, i) => {
   const colors = paintPack(raw);
   return { ...raw, id: i, rocks: [], bridges: c.bridges || [], turns: c.turns || [], plan: c.plan || null,
     snakes: c.snakes.map((sn, si) =>
-      ({ id: "s" + si, color: colors[si], spiky: !!sn.spiky, sleep: !!sn.sleep, cells: sn.cells })) };
+      ({ id: "s" + si, color: colors[si], spiky: !!sn.spiky, sleep: !!sn.sleep || !!sn.apple,
+         apple: !!sn.apple, cells: sn.cells })) };
 };
 
 const craftedToText = (c) => `  {
@@ -814,7 +820,7 @@ const craftedToText = (c) => `  {
     w: ${c.w}, h: ${c.h}, ${c.bridges && c.bridges.length ? `bridges: [${c.bridges.map(([x, y]) => `[${x}, ${y}]`).join(", ")}], ` : ""}${c.turns && c.turns.length ? `turns: [${c.turns.map(([x, y, a, b]) => `[${x}, ${y}, "${a}", "${b}"]`).join(", ")}], ` : ""}${c.mode === "record" ? `ceiling: ${c.ceiling}, proof: "beam", mass: ${c.mass}, marks: ${JSON.stringify(c.marks)}` : `target: ${c.target}`},
     plan: ${JSON.stringify(c.plan || [])},
     snakes: [
-${c.snakes.map((sn) => "      { " + (sn.spiky ? "spiky: true, " : "") + (sn.sleep ? "sleep: true, " : "") +
+${c.snakes.map((sn) => "      { " + (sn.spiky ? "spiky: true, " : "") + (sn.apple ? "apple: true, " : "") + (sn.sleep && !sn.apple ? "sleep: true, " : "") +
     "cells: [" + sn.cells.map(([x, y]) => `[${x}, ${y}]`).join(", ") + "] },").join("\n")}
     ],
   },   // пресет ${c.preset}, сид ${c.seed}`;
@@ -1175,6 +1181,29 @@ function Rock({ x, y }) {
   );
 }
 
+/* Яблоко — та же змея, только в одну клетку, поэтому и живёт в общем списке.
+   Рисуется отдельно: змея из одной клетки — это голова с глазами, а яблоко должно
+   читаться как еда. Группа помечена headG, чтобы анимация обеда гасила его тем же
+   кодом, что и голову съеденной змеи. */
+function AppleView({ snake, shaking, onTap, regRef }) {
+  const [cx, cy] = toPx(snake.cells[0]);
+  return (
+    <g ref={(n) => { if (n) regRef.current[snake.id] = n; else delete regRef.current[snake.id]; }}
+       className={shaking ? "hv-shake" : ""} style={{ cursor: "pointer" }}
+       onPointerDown={(e) => { e.stopPropagation(); onTap(snake.id); }}>
+      <g data-part="headG" transform={"translate(" + cx + " " + cy + ")"}>
+        <circle r="46" fill="transparent" />
+        <path d="M0 -22 q -13 -14 -25 -4 q -13 11 -5 27 q 8 16 21 20 q 5 2 9 0 q 4 2 9 0
+                 q 13 -4 21 -20 q 8 -16 -5 -27 q -12 -10 -25 4 Z"
+              fill="#D8402F" stroke="#9B241A" strokeWidth="6" strokeLinejoin="round" />
+        <path d="M0 -22 q 2 -12 -4 -19" stroke="#6B4A22" strokeWidth="7" strokeLinecap="round" fill="none" />
+        <path d="M1 -24 q 12 -10 22 -4 q -8 11 -21 8 Z" fill="#5E9B3A" stroke="#3F6F26" strokeWidth="4" strokeLinejoin="round" />
+        <path d="M-12 -4 q -5 6 -3 14" stroke="#F2A79C" strokeWidth="6" strokeLinecap="round" fill="none" opacity="0.85" />
+      </g>
+    </g>
+  );
+}
+
 function SnakeView({ snake, shaking, onTap, regRef }) {
   const C = COLORS[snake.color];
   const pts = snake.cells.map(toPx);
@@ -1497,6 +1526,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     setToast(null); setFx(null);
     const s = snakes.find((q) => q.id === sid);
     lastTryRef.current = sid;
+    if (s.apple) { setToast("Яблоко не ходит — его едят. Наведи на него чью-нибудь голову."); return; }
     if (s.sleep) { setToast("Спящая змея не ходит — её можно только съесть."); return; }
     const ray = raycast(snakes, sid, level.w, level.h, board);
     const nom = COLORS[s.color].nom;
@@ -1670,10 +1700,13 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
           {(level.bridges || []).map(([x, y]) => <BridgeFloor key={"bf" + x + "-" + y} x={x} y={y} />)}
           {level.rocks.map(([x, y]) => <Rock key={"r" + x + "-" + y} x={x} y={y} />)}
           <g clipPath="url(#hv-clip)">
-            {snakes.map((s) => (
+            {snakes.map((s) => (s.apple ? (
+              <AppleView key={s.id} snake={s} regRef={regRef}
+                shaking={fx && fx.shakeId === s.id} onTap={tapSnake} />
+            ) : (
               <SnakeView key={s.id} snake={s} regRef={regRef}
                 shaking={fx && fx.shakeId === s.id} onTap={tapSnake} />
-            ))}
+            )))}
           </g>
           {(level.bridges || []).map(([x, y]) => <BridgeRail key={"br" + x + "-" + y} x={x} y={y} />)}
           {fx && fx.ray && <RayView ray={fx.ray} from={fx.from} color={fx.color} />}
@@ -1814,12 +1847,17 @@ const CRAFT_KNOBS = [
   { k: "w",      nom: "Ширина поля",    min: 5, max: 14 },
   { k: "h",      nom: "Высота поля",    min: 5, max: 18 },
   { k: "len",    nom: "Цель (длина)",   min: 6, max: 70 },
-  // после M разрезов на поле M+1 змей, каждая не короче двух клеток, а суммарная
-  // длина всегда равна цели — отсюда жёсткий предел на число ходов
-  { k: "moves",  nom: "Ходов в решении", min: 2, max: (c) => Math.max(2, Math.min(16, Math.floor(c.len / 2) - 1)) },
+  /* После M разрезов на поле M+1 кусков, и суммарная длина всегда равна цели.
+     Обычный кусок не короче двух клеток, а яблоко — ровно одна: len ≥ 2(M+1−A)+A,
+     откуда M ≤ (len−2+A)/2. Каждое яблоко — это лишний ход, который поле выдержит. */
+  { k: "moves",  nom: "Ходов в решении", min: 2,
+    max: (c) => Math.max(2, Math.min(16, Math.floor((c.len - 2 + (c.apples || 0)) / 2))) },
+  { k: "apples", nom: "Яблок",           min: 0, max: (c) => Math.max(0, c.moves - 1),
+    hint: "добыча в одну клетку: +1 и никакого риска" },
   { k: "decoys", nom: "Обманок",        min: 0, max: 10 },
   { k: "spiky",  nom: "из них колючих",  min: 0, max: (c) => c.decoys, sub: true },
-  { k: "sleepy", nom: "из них спящих",   min: 0, max: (c) => Math.max(0, c.decoys - (c.spiky || 0)), sub: true },
+  { k: "sleepy", nom: "Спящих",          min: 0, max: (c) => Math.max(0, c.moves - 1) + c.decoys,
+    hint: "сама не ходит — сначала в решение, потом в обманки" },
   { k: "bridges", nom: "Мостов",         min: 0, max: 4 },
   { k: "turns",  nom: "Колен",           min: 0, max: 8 },
 ];
@@ -1836,6 +1874,7 @@ const WHYNOM = {
   runMax: "передышки сбиваются в кучу",
   alive: "поле не по зубам случайной игре",
   starts: "мало ходов на старте",
+  markUse: "колючие и спящие вышли декорацией",
 };
 const whyNom = (fail) => {
   const head = String(fail).split(/[,:]/)[0].trim();
@@ -2103,7 +2142,7 @@ export default function App() {
       const cur = { ...PRESETS[name], ...(prev[name] || {}) };
       const got = typeof upd === "function" ? upd(cur) : upd;
       const keep = {};
-      for (const k of ["w", "h", "len", "moves", "decoys", "bridges", "turns", "spiky", "sleepy", "voids", "peak", "breather"]) keep[k] = got[k];
+      for (const k of ["w", "h", "len", "moves", "decoys", "bridges", "turns", "spiky", "sleepy", "apples", "voids", "peak", "breather"]) keep[k] = got[k];
       const next = { ...prev, [name]: keep };
       try { localStorage.setItem("hv-craftcfg", JSON.stringify(next)); } catch (e) {}
       return next;

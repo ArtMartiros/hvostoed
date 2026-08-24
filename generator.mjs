@@ -108,6 +108,15 @@ export function applyEat(state, i, ray) {
   return out;
 }
 
+/* Стартовое состояние из уровня. Одно место на всех: шесть отдельных сборок
+   в статистике молча теряли spiky и sleep — то есть решения считались так, будто
+   колючий хвост съедобен, а спящая ходит. Яблоко (одна клетка, без взгляда)
+   такую потерю уже не прощает — падает сразу, и это к лучшему. */
+export const stateOf = (lv) => lv.snakes.map((s) => ({
+  id: s.id, cells: s.cells.map((c) => c.slice()),
+  spiky: !!s.spiky, sleep: !!s.sleep || !!s.apple, apple: !!s.apple,
+}));
+
 export function movesOf(state, w, h, board) {
   const out = [];
   for (let i = 0; i < state.length; i++) {
@@ -158,9 +167,16 @@ export function walk(rnd, w, h, len, blocked, start, firstDir, straightBias) {
    Поэтому вместе с вариантом возвращается список нужных плиток и список клеток,
    которые вариант проходит НАСКВОЗЬ, — и то и другое проверяется на совместимость
    со всеми уже принятыми ходами. */
-function splitOptions(M, maxGap) {
+/* minB=1 разрешает добычу в ОДНУ клетку — это и есть яблоко. Никакой отдельной
+   механики у яблока нет и не нужно: съесть можно только за хвост, а у односкле-
+   точной змеи хвост и есть она сама, и вырастает едок ровно на её длину, то есть
+   на единицу. Всё остальное — луч, зазор, проверка, подсказка, солвер — работает
+   с ним как с любой другой добычей, потому что это она и есть.
+   Одно ограничение неизбежно: у одной клетки нет направления взгляда, значит
+   ходить яблоко не может никогда — помечаем спящим. */
+function splitOptions(M, maxGap, minB) {
   const cells = M.cells, n = cells.length, out = [];
-  for (let b = 2; b <= n - 2; b++) {
+  for (let b = minB || 2; b <= n - 2; b++) {
     for (let k = 0; k <= maxGap && b + k <= n - 1; k++) {
       const aBodyLen = n - b - k;
       const first = sub(cells[b + k - 1] || cells[b - 1], cells[b + k]);
@@ -208,7 +224,8 @@ function floorTake(opt, floor) {
 function unEat(rnd, cfg, state, si, opt) {
   const M = state[si], cells = M.cells, n = cells.length;
   const { b, k, dir, needFirstExt } = opt;
-  const B = { id: cfg._nextId++, cells: cells.slice(0, b).map((c) => c.slice()) };
+  const B = { id: cfg._nextId++, cells: cells.slice(0, b).map((c) => c.slice()),
+              ...(b === 1 ? { apple: true, sleep: true } : {}) };
   const aBody = cells.slice(b + k).map((c) => c.slice());
   const gapCells = cells.slice(b, b + k).map((c) => c.slice());
 
@@ -244,7 +261,7 @@ function unEat(rnd, cfg, state, si, opt) {
   if (A.cells.length !== n - b) return null;
   const next = state.map((s, i) => (i === si ? A : s));
   next.push(B);
-  return { state: next, move: { eater: A.id, prey: B.id, gap: k }, gapCells };
+  return { state: next, move: { eater: A.id, prey: B.id, gap: k, apple: b === 1 }, gapCells };
 }
 
 /* ---------- раскладка пустот по ходам ----------
@@ -300,10 +317,20 @@ export function generate(cfg) {
   const floor = { tiles: new Map(), thru: new Set() };   // пол: где колено, а где сквозной проход
   let debt = 0;                                 // недобор зазоров, размазываем по оставшимся ходам
   const allGaps = [];                           // клетки, через которые летят лучи решения — кандидаты в мосты
+  let applesLeft = cfg.apples || 0;
 
   for (let step = 0; step < M; step++) {
     const f = M - 1 - step;                     // строим с конца: шаг 0 — последний ход решения
     const isRest = want[f] === 0 && cfg.breather > 0;
+    /* Яблоко — ход безрисковый: добыча в одну клетку не убегает и ничем не грозит.
+       Поэтому его место там же, где передышки. Если яблок заказано больше, чем
+       осталось передышек, разрешаем их и на обычных ходах — иначе бюджет не выбрать.
+       Побочная выгода структурная: обычный ход тратит целый кусок змеи, а яблочный —
+       одну клетку, поэтому куски к концу обратной прогулки остаются длиннее, и
+       потолок пустот поднимается. */
+    let restLeft = 0;
+    for (let q = 0; q < f; q++) if (want[q] === 0 && cfg.breather > 0) restLeft++;
+    const wantApple = applesLeft > 0 && (isRest || applesLeft > restLeft);
     const aim = isRest ? 0
       : Math.max(0, Math.min(cfg.maxGap, Math.round(want[f] + debt / (f + 1))));
     // кого резать: с вероятностью branch — случайную змею, иначе самую длинную.
@@ -316,17 +343,19 @@ export function generate(cfg) {
     const rank = new Map(order.map((si, r) => [si, r]));
     const cand = [];
     for (const si of order)
-      for (const opt of shuffled(rnd, splitOptions(state[si], cfg.maxGap))) cand.push({ si, opt });
+      for (const opt of shuffled(rnd, splitOptions(state[si], cfg.maxGap, wantApple ? 1 : 2)))
+        cand.push({ si, opt });
     // при равном зазоре предпочитаем вариант, требующий меньше новых колен:
     // прямой луч читается быстрее, колена нужны там, где без них не выйдет
     for (const c of cand) c.fresh = floorFits(c.opt, floor, cfg.turns || 0);
     const fit = cand.filter((c) => c.fresh !== null);
-    fit.sort((a, b) => (Math.abs(a.opt.k - aim) - Math.abs(b.opt.k - aim))
+    fit.sort((a, b) => ((b.opt.b === 1) - (a.opt.b === 1))
+      || (Math.abs(a.opt.k - aim) - Math.abs(b.opt.k - aim))
       || (a.fresh - b.fresh) || (rank.get(a.si) - rank.get(b.si)));
     let done = null;
     for (const c of fit) {
       const r = unEat(rnd, cfg, state, c.si, c.opt);
-      if (r) { floorTake(c.opt, floor); done = r; break; }
+      if (r) { floorTake(c.opt, floor); done = r; if (c.opt.b === 1) applesLeft--; break; }
     }
     if (!done) break;
     if (!isRest) debt += want[f] - done.move.gap;
@@ -428,6 +457,7 @@ export function generate(cfg) {
   }
   state = state.concat(traps);
   return { w: cfg.w, h: cfg.h, snakes: state, moves, len: cfg.len,
+           apples: moves.filter((m) => m.apple).length,
            decoys: decoys.length + traps.length + bridges.length, bridges, turns,
            voids: moves.reduce((a, m) => a + m.gap, 0), want, peak: cfg.peak, breather: cfg.breather };
 }

@@ -17,7 +17,7 @@ export function solveGoal(lv, target, cap) {
     seen.set(k, 1);
     for (const m of G.movesOf(st, lv.w, lv.h, br)) dfs(m.eat ? G.applyEat(st, m.i, m.ray) : st.filter((_, i) => i !== m.i), d + 1);
   };
-  dfs(lv.snakes.map((s) => ({ cells: s.cells })), 0);
+  dfs(G.stateOf(lv), 0);
   return { sols, minMoves: sols ? minMoves : null };
 }
 
@@ -35,7 +35,7 @@ export function safety(lv, target) {
     }
     memo.set(k, r); return r;
   };
-  const start = lv.snakes.map((s) => ({ cells: s.cells }));
+  const start = G.stateOf(lv);
   if (!win(start)) return null;
   const seen = new Set([stKey(start)]), stack = [start];
   let taps = 0, safe = 0, worst = 1;
@@ -60,7 +60,7 @@ export function shape(lv, tries, seed) {
   const rnd = G.makeRng(seed || 7);
   let far = 0, adj = 0, gaps = 0, steps = 0; const bests = [];
   for (let t = 0; t < tries; t++) {
-    let st = lv.snakes.map((s) => ({ cells: s.cells }));
+    let st = G.stateOf(lv);
     let b = G.maxLen(st);
     for (let s = 0; s < 80; s++) {
       const mv = G.movesOf(st, lv.w, lv.h, br).filter((m) => m.eat);
@@ -73,7 +73,7 @@ export function shape(lv, tries, seed) {
     bests.push(b);
   }
   bests.sort((a, b) => a - b);
-  const starts = G.movesOf(lv.snakes.map((s) => ({ cells: s.cells })), lv.w, lv.h, br).filter((m) => m.eat);
+  const starts = G.movesOf(G.stateOf(lv), lv.w, lv.h, br).filter((m) => m.eat);
   return { starts: starts.length, branch: (far + adj) / Math.max(1, steps),
     farShare: far / Math.max(1, far + adj), avgGap: gaps / Math.max(1, far + adj),
     randMed: bests[Math.floor(bests.length / 2)], randTop: bests[bests.length - 1] };
@@ -81,7 +81,7 @@ export function shape(lv, tries, seed) {
 
 export function beamBest(lv, width) {
   const br = G.boardOf(lv);
-  let layer = [lv.snakes.map((s) => ({ cells: s.cells }))];
+  let layer = [G.stateOf(lv)];
   let best = G.maxLen(layer[0]), moves = 0;
   for (let d = 0; d < 60 && layer.length; d++) {
     const next = [], seen = new Set();
@@ -132,11 +132,10 @@ const tiltOf = (a) => {
    другие обманки, и они могут заслонить ловушку. Поэтому меряем по факту. */
 export function marks(lv) {
   const br = G.boardOf(lv);
-  const marked = lv.snakes.filter((s) => s.spiky || s.sleep);
+  const marked = lv.snakes.filter((s) => !s.apple && (s.spiky || s.sleep));
   if (!marked.length) return { markUse: 1, spikyUse: 1, sleepUse: 1 };
   const works = new Set();
-  let state = lv.snakes.map((s) => ({ id: s.id, cells: s.cells.map((c) => c.slice()),
-    spiky: !!s.spiky, sleep: !!s.sleep }));
+  let state = G.stateOf(lv);
   // спящую из решения съедают по плану — до её хвоста дотягиваются по определению
   for (const m of lv.moves || []) works.add(m.prey);
   for (let m = 0; m <= (lv.moves || []).length; m++) {
@@ -155,13 +154,13 @@ export function marks(lv) {
   const share = (arr) => (arr.length ? arr.filter((s) => works.has(s.id)).length / arr.length : 1);
   return { markUse: share(marked),
            spikyUse: share(lv.snakes.filter((s) => s.spiky)),
-           sleepUse: share(lv.snakes.filter((s) => s.sleep)) };
+           sleepUse: share(lv.snakes.filter((s) => s.sleep && !s.apple)) };
 }
 
 export function curve(lv, target) {
   const br = G.boardOf(lv);
   const win = target ? winner(lv, target) : null;
-  let st = lv.snakes.map((s) => ({ id: s.id, cells: s.cells.map((c) => c.slice()) }));
+  let st = G.stateOf(lv);
   const rows = [];
   for (const mv of lv.moves) {
     const i = st.findIndex((s) => s.id === mv.eater);

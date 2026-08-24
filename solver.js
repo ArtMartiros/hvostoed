@@ -69,7 +69,7 @@ function applyEat(snakes, i, ray) {
   return out;
 }
 
-const key = (s) => s.map((x) => (x.spiky ? '!' : '') + (x.sleep ? 'z' : '') + x.cells.map((c) => c.join('.')).join(';')).sort().join('|');
+const key = (s) => s.map((x) => (x.spiky ? '!' : '') + (x.sleep ? 'z' : '') + (x.apple ? 'a' : '') + x.cells.map((c) => c.join('.')).join(';')).sort().join('|');
 const maxLen = (s) => Math.max(0, ...s.map((x) => x.cells.length));
 
 // Полный перебор с метриками. moveCap: ограничение длины решения (null = без лимита)
@@ -102,7 +102,7 @@ function solve(lv, { allowLaunch, moveCap }) {
       if (sols >= CAP) return;
     }
   }
-  dfs(lv.snakes.map((s) => ({ cells: s.cells, spiky: !!s.spiky, sleep: !!s.sleep })), 0, []);
+  dfs(lv.snakes.map((s) => ({ cells: s.cells, spiky: !!s.spiky, sleep: !!s.sleep || !!s.apple, apple: !!s.apple })), 0, []);
   return { best, sols, minMoves: sols ? minMoves : null, bestSeq };
 }
 

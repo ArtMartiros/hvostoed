@@ -16,7 +16,7 @@ const boardOf = (lv) => ({
   turns: new Map((lv.turns || []).map(([x, y, a, b]) => [M.ckey(x, y), a + b])),
 });
 const mk = (lv) => lv.snakes.map((s, i) => ({ id: 's' + i, cells: s.cells.map((c) => c.slice()),
-  spiky: !!s.spiky, sleep: !!s.sleep }));
+  spiky: !!s.spiky, sleep: !!s.sleep || !!s.apple, apple: !!s.apple }));
 const mass = (sn) => sn.reduce((a, s) => a + s.cells.length, 0);
 
 function report(rec, n) {
@@ -27,7 +27,7 @@ function report(rec, n) {
   const mech = [];
   if ((lv.bridges || []).length) mech.push(`мостов ${lv.bridges.length}`);
   if ((lv.turns || []).length) mech.push(`колен ${lv.turns.length}`);
-  if ((lv.apples || []).length) mech.push(`яблок ${lv.apples.length}`);
+  if (lv.snakes.some((s) => s.apple)) mech.push(`яблок ${lv.snakes.filter((s) => s.apple).length}`);
   if ((lv.portals || []).length) mech.push(`порталов ${lv.portals.length}`);
   if (lv.snakes.some((s) => s.spiky)) mech.push(`колючих ${lv.snakes.filter((s) => s.spiky).length}`);
   if (lv.snakes.some((s) => s.sleep)) mech.push(`спящих ${lv.snakes.filter((s) => s.sleep).length}`);

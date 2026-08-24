@@ -50,13 +50,12 @@ export function encode(rec) {
   const rec_ = rec.mode === 'record' || lv.mode === 'record';
   w.u8(1).u8(lv.w).u8(lv.h).u8(rec_ ? 1 : 0).u16(rec_ ? (lv.ceiling || 0) : (lv.target || 0));
   w.list(lv.snakes, (o, s) => {
-    o.u8(s.cells.length).u8((s.spiky ? 1 : 0) | (s.sleep ? 2 : 0));
+    o.u8(s.cells.length).u8((s.spiky ? 1 : 0) | (s.sleep ? 2 : 0) | (s.apple ? 4 : 0));
     for (const [x, y] of s.cells) o.u8(x).u8(y);
   });
   w.list(lv.rocks || [], (o, [x, y]) => o.u8(x).u8(y));
   w.list(lv.bridges || [], (o, [x, y]) => o.u8(x).u8(y));
   w.list(lv.turns || [], (o, [x, y, a, b]) => o.u8(x).u8(y).u8((SIDE_IDX[a] << 4) | SIDE_IDX[b]));
-  w.list(lv.apples || [], (o, [x, y]) => o.u8(x).u8(y));
   w.list(lv.portals || [], (o, [x, y, u, v]) => o.u8(x).u8(y).u8(u).u8(v));
   const sid = (s) => (typeof s === 'string' ? parseInt(s.slice(1), 10) : s);
   w.list((lv.plan || []).map(sid), (o, v) => o.u8(v));
@@ -84,13 +83,12 @@ export function decode(str) {
   lv.snakes = r.list((o) => {
     const n = o.u8(), f = o.u8(), cells = [];
     for (let k = 0; k < n; k++) cells.push([o.u8(), o.u8()]);
-    return { cells, spiky: !!(f & 1), sleep: !!(f & 2) };
+    return { cells, spiky: !!(f & 1), sleep: !!(f & 2), apple: !!(f & 4) };
   });
   lv.rocks = r.list((o) => [o.u8(), o.u8()]);
   lv.bridges = r.list((o) => [o.u8(), o.u8()]);
   lv.turns = r.list((o) => { const x = o.u8(), y = o.u8(), b = o.u8();
     return [x, y, SIDE_NAME[b >> 4], SIDE_NAME[b & 15]]; });
-  lv.apples = r.list((o) => [o.u8(), o.u8()]);
   lv.portals = r.list((o) => [o.u8(), o.u8(), o.u8(), o.u8()]);
   lv.plan = r.list((o) => 's' + o.u8());
   const played = r.list((o) => 's' + o.u8());
