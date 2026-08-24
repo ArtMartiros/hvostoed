@@ -1085,13 +1085,13 @@ function Turn({ x, y, a, b }) {
   const shut = ["n", "e", "s", "w"].filter((q) => q !== a && q !== b).map((q) => {
     const [mx, my] = mid(q), t = [SIDES[q][1], -SIDES[q][0]];
     return <line key={q} x1={mx - t[0] * 40} y1={my - t[1] * 40} x2={mx + t[0] * 40} y2={my + t[1] * 40}
-      stroke="#7E8CA0" strokeWidth="12" strokeLinecap="round" />;
+      stroke="#8F8877" strokeWidth="12" strokeLinecap="round" />;
   });
   return (
     <g>
-      <rect x={cx - R} y={cy - R} width={R * 2} height={R * 2} rx="18" fill="#DCE3EC" />
-      <path d={d} fill="none" stroke="#9FB0C6" strokeWidth="42" strokeLinecap="round" />
-      <path d={d} fill="none" stroke="#EDF2F8" strokeWidth="26" strokeLinecap="round" />
+      <rect x={cx - R} y={cy - R} width={R * 2} height={R * 2} rx="18" fill="#E3DED2" />
+      <path d={d} fill="none" stroke="#BDB5A2" strokeWidth="42" strokeLinecap="round" />
+      <path d={d} fill="none" stroke="#F4F1E7" strokeWidth="26" strokeLinecap="round" />
       {shut}
     </g>
   );
