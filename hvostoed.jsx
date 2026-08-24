@@ -1782,7 +1782,12 @@ export default function App() {
 const CSS_TEXT = `
 @import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@500;800&family=Rubik:wght@400;600;800&display=swap');
 
-.hv-root{min-height:100vh;min-height:100dvh;background:radial-gradient(120% 90% at 50% 0%,#1C2C20 0%,#152118 55%,#101A13 100%);
+/* Без этого на айфоне по краям белое: у body свои отступы по умолчанию, а за
+   безопасными зонами и при оттяжке страницы Safari красит холст фоном html. */
+html,body{margin:0;padding:0;background:#101A13;overscroll-behavior:none;}
+body{overflow-x:hidden;-webkit-text-size-adjust:100%;}
+
+.hv-root{min-height:100vh;min-height:100dvh;width:100%;overflow-x:hidden;overflow-x:clip;background:radial-gradient(120% 90% at 50% 0%,#1C2C20 0%,#152118 55%,#101A13 100%);
   color:#F3F0E4;font-family:Rubik,system-ui,sans-serif;display:flex;justify-content:center;
   /* На телефоне: двойной тап по змеям не должен зумить поле, долгое нажатие — выделять текст,
      промах мимо змеи — раскачивать страницу. 100dvh вместо 100vh, иначе адресная строка Safari
@@ -1791,8 +1796,9 @@ const CSS_TEXT = `
   -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
 .hv-root *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 .hv-screen{width:100%;max-width:440px;display:flex;flex-direction:column;
-  padding:calc(14px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right))
-          calc(22px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));}
+  --padl:calc(14px + env(safe-area-inset-left));--padr:calc(14px + env(safe-area-inset-right));
+  padding:calc(14px + env(safe-area-inset-top)) var(--padr)
+          calc(22px + env(safe-area-inset-bottom)) var(--padl);}
 
 .hv-top{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
 .hv-icon{width:40px;height:40px;border-radius:13px;border:1px solid #2C3E30;background:#1B2A1F;color:#F3F0E4;
@@ -1890,8 +1896,20 @@ const CSS_TEXT = `
 .hv-rules li{font-size:13.5px;line-height:1.45;color:#C9D6C2;background:#1B2A1F;border:1px solid #2C3E30;
   border-radius:14px;padding:10px 13px;}
 .hv-rules b{color:#F3F0E4;}
-.hv-packs{display:flex;gap:8px;width:100%;margin-bottom:12px;}
-.hv-pack{flex:1;display:flex;flex-direction:column;gap:2px;align-items:flex-start;background:#1B2A1F;
+/* Вкладок больше, чем влезает в телефон. Лента прокручивается сама и выходит за
+   отступы экрана — режется по краю стекла, а не по полю, — иначе горизонтально
+   ползала вся страница. */
+.hv-packs{display:flex;gap:8px;margin-bottom:12px;overflow-x:auto;overflow-y:hidden;
+  /* у .hv-menu align-items:center, поэтому без stretch лента растянулась бы по своему
+     содержимому и вылезла за экран вместо того, чтобы прокручиваться внутри себя */
+  align-self:stretch;min-width:0;
+  scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;
+  scrollbar-width:none;-ms-overflow-style:none;
+  margin-left:calc(-1 * var(--padl));margin-right:calc(-1 * var(--padr));
+  padding-left:var(--padl);padding-right:var(--padr);}
+.hv-packs::-webkit-scrollbar{display:none;}
+.hv-pack{flex:0 0 auto;width:132px;scroll-snap-align:start;
+  display:flex;flex-direction:column;gap:2px;align-items:flex-start;background:#1B2A1F;
   border:1px solid #2C3E30;border-radius:14px;padding:9px 12px;color:#8AA089;cursor:pointer;text-align:left;
   font-family:Rubik,sans-serif;transition:border-color .12s ease,color .12s ease;}
 .hv-pack-on{border-color:#58A942;color:#F3F0E4;background:#20321F;}
