@@ -1932,12 +1932,44 @@ const CRAFT_KNOBS = [
   { k: "turns",  nom: "Колен",           min: 0, max: 8 },
   { k: "portals", nom: "Порталов",        min: 0, max: (c) => Math.max(0, Math.floor(c.len / 3) - 1),
     hint: "вход и выход: луч ныряет и выходит тем же направлением" },
-  { k: "mechs",  nom: "Механик на уровень", min: 0, max: 6,
-    hint: "0 — все сразу; 1–2 читаются, шесть поверх базового правила — нет" },
+  { k: "mechs",  nom: "Механик на уровень", min: 0, max: 6 },
 ];
+/* Механики в том же порядке, в каком стоят ручки выше: потолок снимает лишние
+   С КОНЦА списка, и на экране это читается как «снялись нижние». */
+const MECH_KEYS = ["apples", "spiky", "sleepy", "bridges", "turns", "portals"];
+const МЕХ = { apples: "яблоки", spiky: "колючие", sleepy: "спящие",
+              bridges: "мосты", turns: "колена", portals: "порталы" };
+const mechsOn = (c) => MECH_KEYS.filter((k) => (c[k] || 0) > 0);
+
+/* Потолок разнообразия держится ЗДЕСЬ, на виду, а не внутри генератора.
+   Раньше он жил там: ручка молча обнуляла лишние механики случайным выбором по
+   сиду. Замер по пяти пресетам: при mechs=2 из шести поднятых ручек портал
+   доезжал до доски в 25% сборок, яблоко — в 35%. Ползунок, который врёт о
+   собственном значении, хуже отсутствующего ползунка.
+
+   Правило простое и обратимое в обе стороны: поднял лишнюю механику — потолок
+   подрос сам; опустил потолок — лишние механики обнулились прямо на глазах.
+   Ничто не пропадает молча, и что видно в модалке, то и будет на поле. */
+const fitMechs = (c, touched) => {
+  const on = mechsOn(c);
+  if (!c.mechs || on.length <= c.mechs) return c;
+  // тронули механику (или разбираем чужой сохранённый конфиг) — растёт потолок
+  if (touched !== "mechs") return { ...c, mechs: on.length };
+  const out = { ...c };
+  for (const k of on.slice(c.mechs)) out[k] = 0;
+  return out;
+};
 /* Разбор отказов человеческим языком: приёмка возвращает имя метрики, а игроку
    нужно знать, какую ручку отпустить. */
 const WHYNOM = {
+  // недобор: ручка заказала, доска не отдала
+  portals: "порталов столько не разложить",
+  bridges: "мостов столько не поставить",
+  turns: "колен столько не набрать",
+  apples: "яблок столько не нарезать",
+  spiky: "колючих столько не пристроить",
+  sleepy: "спящих столько не набрать",
+  decoys: "обманок столько не разместить",
   decoyLive: "обманки ни во что не играют",
   safety: "слишком много тапов насмерть",
   sols: "решение выходит единственным",
@@ -1980,16 +2012,20 @@ function CraftModal({ base, cfg, onSet, onClose, onGo, onReset, busy, fail }) {
   const тесно = !roomy ? `цель ${cfg.len} не уместится на ${cfg.w}×${cfg.h}` : null;
   // цель тянет за собой предел ходов, ходы — предел пустот: подрезаем следом,
   // иначе ползунок врёт о своей позиции, а генератор молча крутит невозможное
-  const clamp = (c) => {
-    const q = CRAFT_KNOBS.reduce((a, k) => {
-      const hi = typeof k.max === "function" ? k.max(a) : k.max;
-      return { ...a, [k.k]: Math.max(k.min, Math.min(hi, a[k.k] || 0)) };
-    }, c);
+  const bounds = (c) => CRAFT_KNOBS.reduce((a, k) => {
+    const hi = typeof k.max === "function" ? k.max(a) : k.max;
+    return { ...a, [k.k]: Math.max(k.min, Math.min(hi, a[k.k] || 0)) };
+  }, c);
+  // потолок механик считаем в середине: он может обнулить ручку, а от яблок
+  // зависит предел ходов — поэтому пределы прогоняем ещё раз следом
+  const clamp = (c, touched) => {
+    const q = bounds(fitMechs(bounds(c), touched));
     q.voids = Math.max(0, Math.min(q.voids, Math.max(4, Math.round(voidCeiling(q) * 1.3))));
     return q;
   };
-  const set = (k) => (v) => onSet((prev) => clamp({ ...prev, [k]: v }));
-  const step = (k) => (d) => onSet((prev) => clamp({ ...prev, [k]: prev[k] + d }));
+  const set = (k) => (v) => onSet((prev) => clamp({ ...prev, [k]: v }, k));
+  const step = (k) => (d) => onSet((prev) => clamp({ ...prev, [k]: prev[k] + d }, k));
+  const on = mechsOn(cfg);
   return (
     <div className="hv-overlay hv-modal" onClick={busy ? undefined : onClose}>
       <div className="hv-card hv-cfg" onClick={(e) => e.stopPropagation()}>
@@ -2001,7 +2037,10 @@ function CraftModal({ base, cfg, onSet, onClose, onGo, onReset, busy, fail }) {
         {CRAFT_KNOBS.map((q) => (
           <Stepper key={q.k} nom={q.nom} min={q.min} value={cfg[q.k] || 0} onStep={step(q.k)} sub={q.sub}
             max={typeof q.max === "function" ? q.max(cfg) : q.max}
-            hint={q.k === "len" && тесно ? тесно : q.hint || null} />
+            hint={q.k === "len" && тесно ? тесно
+              : q.k === "mechs" ? (on.length ? "на поле: " + on.map((k) => МЕХ[k]).join(", ") : "механик не поднято")
+                + (cfg.mechs ? " · меньше — лишние снимутся" : " · 0 — потолка нет")
+              : q.hint || null} />
         ))}
 
         <div className="hv-knob col">
@@ -2173,7 +2212,7 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("hv-inbox") || "[]"); } catch (e) { return []; }
   });
 
-  const cfgOf = (name) => ({ ...PRESETS[name], ...(craftCfgs[name] || {}) });
+  const cfgOf = (name) => fitMechs({ ...PRESETS[name], ...(craftCfgs[name] || {}) }, null);
   const setCfg = (name, upd) => {
     setCraftCfgs((prev) => {
       const cur = { ...PRESETS[name], ...(prev[name] || {}) };

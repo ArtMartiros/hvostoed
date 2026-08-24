@@ -379,21 +379,14 @@ export function generate(cfg) {
   const rnd = makeRng(cfg.seed);
   cfg = { maxGap: 3, tailStraight: 0.6, branch: 0.5, straightBias: 0.55, decoys: 0,
           peak: 1, breather: 3, ...cfg, _nextId: 1 };
-  /* Сколько РАЗНЫХ механик пускать на доску. Ручка «сколько чего» этого не решает:
-     ничто не мешало навалить мосты, колена, яблоки, колючих и спящих на один
-     уровень разом — а это пять правил поверх базового, и читать такое нельзя.
-     Подача по одной-двум за уровень — то, ради чего ручка и нужна. Выбор случайный
-     по сиду: два уровня с одним конфигом окажутся про разное. */
+  /* Сколько РАЗНЫХ механик пускать на доску — вопрос решённый ДО генератора.
+     Раньше срезка жила здесь: ручка «Механик на уровень» молча обнуляла лишние
+     механики случайным выбором по сиду. Замер: при mechs=2 из шести поднятых
+     ручек портал доезжал до доски в 25% сборок, яблоко — в 35%. С точки зрения
+     игрока это ложь ползунка: поднял «Порталов 2» — порталов нет.
+     Теперь ограничение держит МОДАЛКА: подняв лишнюю механику, видишь, как
+     обнуляется другая. Здесь же контракт простой — что в конфиге, то и на доске. */
   const MECHS = ['bridges', 'turns', 'apples', 'spiky', 'sleepy', 'portals'];
-  if (cfg.mechs > 0) {
-    const kinds = MECHS.filter((k) => (cfg[k] || 0) > 0);
-    if (kinds.length > cfg.mechs) {
-      const keep = new Set(shuffled(rnd, kinds).slice(0, cfg.mechs));
-      const cut = {};
-      for (const k of kinds) if (!keep.has(k)) cut[k] = 0;
-      cfg = { ...cfg, ...cut };
-    }
-  }
 
   const laid = walkGated(rnd, cfg);
   if (!laid) return null;
@@ -440,8 +433,12 @@ export function generate(cfg) {
       for (const opt of shuffled(rnd, splitOptions(state[si], cfg.maxGap, wantApple ? 1 : 2, gates)))
         cand.push({ si, opt });
     // при равном зазоре предпочитаем вариант, требующий меньше новых колен:
-    // прямой луч читается быстрее, колена нужны там, где без них не выйдет
+    // прямой луч читается быстрее, колена нужны там, где без них не выйдет.
+    // Но пока заказанные колена НЕ НАБРАНЫ, предпочтение обратное: cfg.turns
+    // раньше работал одним лишь потолком, никто к нему не стремился, и ручка
+    // «Колен 3» отдавала в среднем 1.9. Знак сравнения — вся разница.
     for (const c of cand) c.fresh = floorFits(c.opt, floor, cfg.turns || 0);
+    const needTurns = (cfg.turns || 0) - floor.tiles.size;
     const fit = cand.filter((c) => c.fresh !== null);
     /* Портал, через который решение ни разу не проходит, — декорация: змея просто
        лежит сквозь него и лежит. Поэтому ходы, чей луч ныряет в ещё не задействованный
@@ -451,7 +448,8 @@ export function generate(cfg) {
     fit.sort((a, b) => ((b.opt.b === 1) - (a.opt.b === 1))
       || (fresh(b) - fresh(a))
       || (Math.abs(a.opt.k - aim) - Math.abs(b.opt.k - aim))
-      || (a.fresh - b.fresh) || (rank.get(a.si) - rank.get(b.si)));
+      || (needTurns > 0 ? b.fresh - a.fresh : a.fresh - b.fresh)
+      || (rank.get(a.si) - rank.get(b.si)));
     let done = null;
     for (const c of fit) {
       const r = unEat(rnd, cfg, state, c.si, c.opt);
@@ -504,8 +502,12 @@ export function generate(cfg) {
   const eaters = new Set(moves.map((m) => m.eater));
   let sleepLeft = cfg.sleepy || 0;
   // только куски РЕШЕНИЯ: мостовая обманка уже стоит в state, а её работа — стоять
-  // поперёк луча, и «спит» ей ничего не добавляет
-  for (const s of shuffled(rnd, state.filter((s) => !s.decoy && !eaters.has(s.id)))) {
+  // поперёк луча, и «спит» ей ничего не добавляет.
+  // И не яблоки: яблоко спит по своей природе (у одной клетки нет направления
+  // взгляда), пометка ему ничего не добавляет, а бюджет спящих съедала. Замер:
+  // на «просторе» все три яблока сидели в этом же списке, и из трёх заказанных
+  // спящих до доски доезжали две.
+  for (const s of shuffled(rnd, state.filter((s) => !s.decoy && !s.apple && !s.sleep && !eaters.has(s.id)))) {
     if (sleepLeft <= 0) break;
     s.sleep = true; sleepLeft--;
   }
