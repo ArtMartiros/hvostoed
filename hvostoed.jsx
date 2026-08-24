@@ -1585,10 +1585,17 @@ export default function App() {
 const CSS_TEXT = `
 @import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@500;800&family=Rubik:wght@400;600;800&display=swap');
 
-.hv-root{min-height:100vh;background:radial-gradient(120% 90% at 50% 0%,#1C2C20 0%,#152118 55%,#101A13 100%);
-  color:#F3F0E4;font-family:Rubik,system-ui,sans-serif;display:flex;justify-content:center;}
+.hv-root{min-height:100vh;min-height:100dvh;background:radial-gradient(120% 90% at 50% 0%,#1C2C20 0%,#152118 55%,#101A13 100%);
+  color:#F3F0E4;font-family:Rubik,system-ui,sans-serif;display:flex;justify-content:center;
+  /* На телефоне: двойной тап по змеям не должен зумить поле, долгое нажатие — выделять текст,
+     промах мимо змеи — раскачивать страницу. 100dvh вместо 100vh, иначе адресная строка Safari
+     добавляет лишнюю прокрутку. */
+  touch-action:manipulation;overscroll-behavior:none;
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
 .hv-root *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-.hv-screen{width:100%;max-width:440px;padding:14px 14px 22px;display:flex;flex-direction:column;}
+.hv-screen{width:100%;max-width:440px;display:flex;flex-direction:column;
+  padding:calc(14px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right))
+          calc(22px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));}
 
 .hv-top{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
 .hv-icon{width:40px;height:40px;border-radius:13px;border:1px solid #2C3E30;background:#1B2A1F;color:#F3F0E4;

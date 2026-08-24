@@ -1,0 +1,62 @@
+# Сборка и публикация на GitHub Pages.
+# Железное правило проекта — ни один уровень не едет без прогона солвера — здесь
+# становится воротами: не прошли проверки, значит и сайт не обновился.
+name: Проверка и публикация
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Уровни, поля и подсказка
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Солвер по всем уровням
+        run: node solver.js hvostoed.jsx
+      - name: Поля режима рекорда
+        run: node records.mjs hvostoed.jsx
+      - name: Подсказка доводит до цели и до потолка
+        run: node hints.mjs hvostoed.jsx
+
+  build:
+    name: Сборка
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: Публикация
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
