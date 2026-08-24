@@ -2001,7 +2001,7 @@ function CraftModal({ base, cfg, onSet, onClose, onGo, onReset, busy, fail }) {
         {CRAFT_KNOBS.map((q) => (
           <Stepper key={q.k} nom={q.nom} min={q.min} value={cfg[q.k] || 0} onStep={step(q.k)} sub={q.sub}
             max={typeof q.max === "function" ? q.max(cfg) : q.max}
-            hint={q.k === "len" && тесно ? тесно : null} />
+            hint={q.k === "len" && тесно ? тесно : q.hint || null} />
         ))}
 
         <div className="hv-knob col">
