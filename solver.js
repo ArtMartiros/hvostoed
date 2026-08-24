@@ -38,6 +38,13 @@ function raycast(snakes, i, W, H, board) {
     if (x < 0 || y < 0 || x >= W || y >= H) return { kind: 'edge', gap };
     if (board.rocks.has(ck(x, y))) return { kind: 'rock' };
     if (board.bridges.has(ck(x, y))) { gap.push([x, y]); continue; }   // луч идёт над мостом
+    // спина колена — СТЕНА, и стена не исчезает оттого, что на плитке
+    // кто-то лежит: проверяем закрытую сторону РАНЬШЕ занятости. Иначе змея,
+    // легшая на плитку, подставляла свой хвост под луч, который упирался колену
+    // в спину, — и обед проходил сквозь стену.
+    const t = board.turns.get(ck(x, y));
+    const from = t ? (dx === 1 ? 'w' : dx === -1 ? 'e' : dy === 1 ? 'n' : 's') : null;
+    if (t && t[0] !== from && t[1] !== from) return { kind: 'turnBack' };
     const hit = occ.get(ck(x, y));
     if (hit) {
       if (hit.si === i) return { kind: 'self' };
@@ -46,12 +53,7 @@ function raycast(snakes, i, W, H, board) {
     }
     const g = board.gates.get(ck(x, y));            // портал: вход, выход, направление то же
     if (g) { gap.push([x, y]); x = g[0] - dx; y = g[1] - dy; continue; }   // шаг прибавляется сверху
-    const t = board.turns.get(ck(x, y));
-    if (t) {                                          // колено: с открытой стороны гнёт, с закрытой — стена
-      const from = dx === 1 ? 'w' : dx === -1 ? 'e' : dy === 1 ? 'n' : 's';
-      if (t[0] !== from && t[1] !== from) return { kind: 'turnBack' };
-      [dx, dy] = SIDES[t[0] === from ? t[1] : t[0]];
-    }
+    if (t) [dx, dy] = SIDES[t[0] === from ? t[1] : t[0]];   // открытая сторона — гнём (спину проверили выше)
     gap.push([x, y]);
   }
 }

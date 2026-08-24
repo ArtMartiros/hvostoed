@@ -868,6 +868,13 @@ function raycast(snakes, sid, W, H, board) {
     if (x < 0 || y < 0 || x >= W || y >= H) return { kind: "edge", gap, dir: [dx, dy] };
     if (board.rocks.has(ckey(x, y))) return { kind: "rock", gap, hitCell: [x, y], dir: [dx, dy] };
     if (board.bridges.has(ckey(x, y))) { gap.push([x, y]); continue; }
+    // спина колена — СТЕНА, и стена не исчезает оттого, что на плитке
+    // кто-то лежит: проверяем закрытую сторону РАНЬШЕ занятости. Иначе змея,
+    // легшая на плитку, подставляла свой хвост под луч, который упирался колену
+    // в спину, — и обед проходил сквозь стену.
+    const t = board.turns.get(ckey(x, y));
+    const from = t ? sideName([-dx, -dy]) : null;
+    if (t && t[0] !== from && t[1] !== from) return { kind: "turnBack", gap, hitCell: [x, y], dir: [dx, dy] };
     const hit = occ.get(ckey(x, y));
     if (hit) {
       if (hit.sid === sid) return { kind: "self", gap, hitCell: [x, y], dir: [dx, dy] };
@@ -884,12 +891,8 @@ function raycast(snakes, sid, W, H, board) {
     // шаг здесь прибавляется СВЕРХУ цикла, поэтому встаём на клетку перед выходом:
     // сама клетка выхода обязана быть прочитана как обычная (там может кто-то лежать)
     if (g) { gap.push([x, y]); x = g[0] - dx; y = g[1] - dy; continue; }
-    const t = board.turns.get(ckey(x, y));
-    if (t) {
-      const from = sideName([-dx, -dy]);
-      if (t[0] !== from && t[1] !== from) return { kind: "turnBack", gap, hitCell: [x, y], dir: [dx, dy] };
-      [dx, dy] = SIDES[t[0] === from ? t[1] : t[0]];
-    }
+    // клетка пуста и открыта — колено гнёт луч (спину проверили выше)
+    if (t) [dx, dy] = SIDES[t[0] === from ? t[1] : t[0]];
     gap.push([x, y]);
   }
 }
@@ -1149,25 +1152,40 @@ function angleAt(P, s) {
    всегда лежит змея, поэтому настил под ней не виден вовсе. Настил идёт под
    змеями (тёплая клетка пола), а угловые скобы — ПОВЕРХ них, чтобы клетка
    читалась как проходимая, что бы на ней ни стояло. */
-/* Колено рисуется только на полу: перекрытое змеёй оно и не работает, так что
-   прятаться под ней — честное поведение, а не недосмотр. Открытые стороны —
-   жёлоб, закрытые — стенка. */
-function Turn({ x, y, a, b }) {
+/* Колено — тоже два слоя, и по той же причине, что мост, только цена ошибки выше.
+   Жёлоб идёт ПОД змеями, стенки закрытых сторон — ПОВЕРХ.
+
+   Раньше колено рисовалось целиком на полу, и это было честно: занятость
+   читалась раньше плитки, поэтому перекрытое колено не работало вовсе —
+   невидимое и безвредное. Теперь спина колена держит луч, даже когда на плитке
+   кто-то лежит (иначе обед проходил сквозь стену), и невидимая стенка стала бы
+   аварией, которую нельзя предвидеть. Значит стенка обязана быть видна всегда. */
+function TurnFloor({ x, y, a, b }) {
   const cx = x * CS + CS / 2, cy = y * CS + CS / 2, R = 46;
   const mid = (sd) => [cx + SIDES[sd][0] * R, cy + SIDES[sd][1] * R];
   const [ax, ay] = mid(a), [bx, by] = mid(b);
   const d = "M" + ax + " " + ay + " Q" + cx + " " + cy + " " + bx + " " + by;
-  const shut = ["n", "e", "s", "w"].filter((q) => q !== a && q !== b).map((q) => {
-    const [mx, my] = mid(q), t = [SIDES[q][1], -SIDES[q][0]];
-    return <line key={q} x1={mx - t[0] * 40} y1={my - t[1] * 40} x2={mx + t[0] * 40} y2={my + t[1] * 40}
-      stroke="#8F8877" strokeWidth="12" strokeLinecap="round" />;
-  });
   return (
     <g>
       <rect x={cx - R} y={cy - R} width={R * 2} height={R * 2} rx="18" fill="#E3DED2" />
       <path d={d} fill="none" stroke="#BDB5A2" strokeWidth="42" strokeLinecap="round" />
       <path d={d} fill="none" stroke="#F4F1E7" strokeWidth="26" strokeLinecap="round" />
-      {shut}
+    </g>
+  );
+}
+
+function TurnWalls({ x, y, a, b }) {
+  const cx = x * CS + CS / 2, cy = y * CS + CS / 2, R = 46;
+  return (
+    <g>
+      {["n", "e", "s", "w"].filter((q) => q !== a && q !== b).map((q) => {
+        const mx = cx + SIDES[q][0] * R, my = cy + SIDES[q][1] * R;
+        const t = [SIDES[q][1], -SIDES[q][0]];
+        return (
+          <line key={q} x1={mx - t[0] * 40} y1={my - t[1] * 40} x2={mx + t[0] * 40} y2={my + t[1] * 40}
+            stroke="#8F8877" strokeWidth="12" strokeLinecap="round" />
+        );
+      })}
     </g>
   );
 }
@@ -1760,7 +1778,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
           </defs>
           <rect x="0" y="0" width={W} height={H} rx="20" fill="#ECF2DE" />
           {cells}
-          {(level.turns || []).map(([x, y, a, b]) => <Turn key={"t" + x + "-" + y} x={x} y={y} a={a} b={b} />)}
+          {(level.turns || []).map(([x, y, a, b]) => <TurnFloor key={"t" + x + "-" + y} x={x} y={y} a={a} b={b} />)}
           {(level.portals || []).map(([x, y, u, v], i) => (
             <g key={"g" + i}>
               <Gate x={x} y={y} into pair={i} />
@@ -1779,6 +1797,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
             )))}
           </g>
           {(level.bridges || []).map(([x, y]) => <BridgeRail key={"br" + x + "-" + y} x={x} y={y} />)}
+          {(level.turns || []).map(([x, y, a, b]) => <TurnWalls key={"tw" + x + "-" + y} x={x} y={y} a={a} b={b} />)}
           {fx && fx.ray && <RayView ray={fx.ray} from={fx.from} color={fx.color} />}
           {plus && (
             <text key={plus.key} className="hv-plus" x={plus.x * CS + CS / 2} y={plus.y * CS - 6}

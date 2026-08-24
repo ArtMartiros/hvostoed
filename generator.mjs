@@ -81,6 +81,13 @@ export function raycast(state, i, w, h, board) {
     if (step > cap) return { kind: 'loop', gap: path.length, path, dir: d };
     if (!inside(w, h, c)) return { kind: 'edge', gap: path.length, path, dir: d };
     if (bridges && bridges.has(ck(c))) { path.push(c); c = add(c, d); continue; }   // луч идёт над мостом
+    // спина колена — СТЕНА, и стена не исчезает оттого, что на плитке
+    // кто-то лежит: проверяем закрытую сторону РАНЬШЕ занятости. Иначе змея,
+    // легшая на плитку, подставляла свой хвост под луч, который упирался колену
+    // в спину, — и обед проходил сквозь стену.
+    const t = turns && turns.get(ck(c));
+    const from = t ? sideName([-d[0], -d[1]]) : null;
+    if (t && t[0] !== from && t[1] !== from) return { kind: 'turnBack', gap: path.length, path, dir: d };
     const hit = occ.get(ck(c));
     if (hit) {
       if (hit.si === i) return { kind: 'self', gap: path.length, path, dir: d };
@@ -94,12 +101,8 @@ export function raycast(state, i, w, h, board) {
     // значит лёгшая на вход змея его перекрывает — то же правило, что у колена.
     const g = gates && gates.get(ck(c));
     if (g) { path.push(c); c = g.slice(); continue; }
-    const t = turns && turns.get(ck(c));
-    if (t) {
-      const from = sideName([-d[0], -d[1]]);
-      if (t[0] !== from && t[1] !== from) return { kind: 'turnBack', gap: path.length, path, dir: d };
-      d = SIDES[t[0] === from ? t[1] : t[0]];
-    }
+    // клетка пуста и открыта — колено гнёт луч (спину проверили выше)
+    if (t) d = SIDES[t[0] === from ? t[1] : t[0]];
     path.push(c); c = add(c, d);
   }
 }
@@ -271,28 +274,38 @@ function splitOptions(M, maxGap, minB, gates) {
       if (!ok) continue;
       if (aBodyLen >= 2) {
         if (!eq(sub(cells[b + k], cells[b + k + 1]), first)) continue;
-        out.push({ b, k, dir: first, needFirstExt: null, tiles, thru, gated });
+        out.push({ b, k, dir: first, needFirstExt: null, tiles, thru, gated, stop: cells[b - 1] });
       } else {
         if (k === 0) continue;                     // без зазора хвост не дорастить, A[1] взять неоткуда
-        out.push({ b, k, dir: first, needFirstExt: add(cells[b + k], first, -1), tiles, thru, gated });
+        out.push({ b, k, dir: first, needFirstExt: add(cells[b + k], first, -1), tiles, thru, gated,
+                   stop: cells[b - 1] });
       }
     }
   }
   return out;
 }
 
-// Совместим ли вариант с полом, который уже сложился: на клетке либо плитка, либо
-// сквозной проход, третьего не дано, и две разные плитки на одной клетке невозможны.
-function floorFits(opt, floor, cap) {
+/* Совместим ли вариант с полом, который уже сложился: на клетке либо плитка, либо
+   сквозной проход, третьего не дано, и две разные плитки на одной клетке невозможны.
+
+   Третье правило — про клетку, где луч ОСТАНАВЛИВАЕТСЯ, то есть хвост жертвы.
+   Спина колена стена, и лежащая на плитке змея её не отменяет, — значит плитка
+   на хвосте жертвы может закрыть обед, который план считал состоявшимся. Заранее
+   знать, с какой стороны луч придёт в эту клетку через пять ходов, дешевле не
+   пытаться: запрещаем совмещение в обе стороны — плитку на стоп-клетку и
+   стоп-клетку на плитку. Плиток 2–4 на уровень, зазоров кратно больше, так что
+   выбор это почти не сужает (замер: колена доезжают в 98–100% сборок). */
+function floorFits(opt, floor, stops, cap) {
   let fresh = 0;
   for (const t of opt.tiles) {
     const k = ck(t.cell);
-    if (floor.thru.has(k)) return null;
+    if (floor.thru.has(k) || stops.has(k)) return null;
     const was = floor.tiles.get(k);
     if (was === undefined) fresh++;
     else if (was !== t.key) return null;
   }
   for (const c of opt.thru) if (floor.tiles.has(ck(c))) return null;
+  if (floor.tiles.has(ck(opt.stop))) return null;
   if (floor.tiles.size + fresh > cap) return null;
   return fresh;
 }
@@ -416,7 +429,7 @@ export function generate(cfg) {
   for (const k of gateCells) floor.thru.add(k);
   let debt = 0;                                 // недобор зазоров, размазываем по оставшимся ходам
   const allGaps = [];                           // клетки, через которые летят лучи решения — кандидаты в мосты
-  const stops = new Set();                      // а на этих лучи решения останавливаются — мосту там не место
+  const stops = new Set();                      // а на этих лучи решения ОСТАНАВЛИВАЮТСЯ: там не место ни мосту, ни плитке
   let applesLeft = cfg.apples || 0;
   const gatesLeft = new Set(portals.map(([x, y]) => ck([x, y])));
 
@@ -451,7 +464,7 @@ export function generate(cfg) {
     // Но пока заказанные колена НЕ НАБРАНЫ, предпочтение обратное: cfg.turns
     // раньше работал одним лишь потолком, никто к нему не стремился, и ручка
     // «Колен 3» отдавала в среднем 1.9. Знак сравнения — вся разница.
-    for (const c of cand) c.fresh = floorFits(c.opt, floor, cfg.turns || 0);
+    for (const c of cand) c.fresh = floorFits(c.opt, floor, stops, cfg.turns || 0);
     const needTurns = (cfg.turns || 0) - floor.tiles.size;
     const fit = cand.filter((c) => c.fresh !== null);
     /* Портал, через который решение ни разу не проходит, — декорация: змея просто
