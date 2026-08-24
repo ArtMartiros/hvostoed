@@ -17,19 +17,19 @@ export const PRESETS = {
               min: { decoyLive: 1, safety: 0.75, sols: 2, branch: 2 },
               max: { branch: 5, voidMiss: 2, runMax: 3 } },
   средний:  { w: 9,  h: 9,  len: 22, moves: 6,  maxGap: 4, voids: 9,  peak: 1, breather: 3, straightBias: 0.7,
-              decoys: 3, spiky: 1, sleepy: 0, decoyMax: 4,
+              decoys: 3, bridges: 1, spiky: 1, sleepy: 0, decoyMax: 4,
               min: { decoyLive: 1, safety: 0.65, sols: 3, branch: 2.5, farShare: 0.5 },
               max: { branch: 6, voidMiss: 3, runMax: 3 } },
   длинный:  { w: 10, h: 11, len: 34, moves: 9,  maxGap: 5, voids: 14, peak: 1, breather: 3, straightBias: 0.8,
-              decoys: 4, spiky: 1, sleepy: 1, decoyMax: 5,
+              decoys: 4, bridges: 1, spiky: 1, sleepy: 1, decoyMax: 5,
               min: { decoyLive: 0.75, safety: 0.6, sols: 3, branch: 3, farShare: 0.5 },
               max: { branch: 7, voidMiss: 4, runMax: 3 } },
   пустоты:  { w: 10, h: 11, len: 30, moves: 8,  maxGap: 5, voids: 16, peak: 1, breather: 3, straightBias: 0.85,
-              decoys: 5, spiky: 1, sleepy: 1, decoyMax: 4,
+              decoys: 5, bridges: 2, spiky: 1, sleepy: 1, decoyMax: 4,
               min: { decoyLive: 0.75, safety: 0.6, sols: 2, branch: 2.5, farShare: 0.7, avgGap: 1.3 },
               max: { branch: 7, voidMiss: 4, runMax: 3 } },
   простор:  { w: 12, h: 16, len: 52, moves: 13, maxGap: 5, voids: 26, peak: 1, breather: 3, straightBias: 0.8,
-              decoys: 8, spiky: 2, sleepy: 2, decoyMax: 5, record: true,
+              decoys: 8, bridges: 2, spiky: 2, sleepy: 2, decoyMax: 5, record: true,
               min: { decoyLive: 0.6, branch: 3, farShare: 0.6, avgGap: 1.2, alive: 0.2 },
               max: { branch: 8, alive: 0.65, voidMiss: 6, runMax: 3 } },
 };
@@ -41,10 +41,13 @@ const fmt = (x) => (x == null ? '—' : (typeof x === 'number' ? +x.toFixed(2) :
    сейчас, либо она сама может пойти. Аудит показал, что иначе на мелких досках
    часть обманок оседает в углах и не участвует ни в чём. */
 function decoyLiveness(lv) {
-  const decoys = lv.snakes.filter((s) => s.decoy);
+  // Мостовая обманка исключена намеренно: её работа — стоять поперёк луча и врать,
+  // что путь закрыт. Она соблазняет собой самим фактом, а не съедобностью, и то,
+  // что решение через неё проходит, гарантировано построением.
+  const decoys = lv.snakes.filter((s) => s.decoy && !s.onBridge);
   if (!decoys.length) return 1;
   const st = lv.snakes.map((s) => ({ cells: s.cells }));
-  const mv = G.movesOf(st, lv.w, lv.h);
+  const mv = G.movesOf(st, lv.w, lv.h, G.bridgeSet(lv));
   const live = new Set();
   lv.snakes.forEach((s, i) => {
     if (!s.decoy) return;
@@ -68,10 +71,16 @@ export function measureCheap(lv, preset) {
 }
 
 export function measureDeep(lv, preset, m) {
-  // наклон риска меряем отдельно: построение задаёт зазоры, а не число способов ошибиться
-  const cv = S.curve(lv, lv.len);
-  if (cv) { m.tiltRisk = cv.tiltRisk; m.endRisk = cv.rows[cv.rows.length - 1].dead;
-            m.risks = cv.rows.map((r) => r.dead); }
+  /* Наклон риска меряем отдельно: построение задаёт зазоры, а не число способов
+     ошибиться. Но ТОЛЬКО на целевых уровнях: на поле рекорда цели нет, и вопрос
+     «достижима ли ещё длина lv.len» заставляет обойти всё пространство состояний
+     целиком, когда ответ «нет». На «просторе» это стоило 24 секунд за попытку
+     против 450 мс на всё остальное. */
+  if (!preset.record) {
+    const cv = S.curve(lv, lv.len);
+    if (cv) { m.tiltRisk = cv.tiltRisk; m.endRisk = cv.rows[cv.rows.length - 1].dead;
+              m.risks = cv.rows.map((r) => r.dead); }
+  }
   if (preset.record) {
     const bm = S.beamBest(lv, 160);
     m.ceiling = bm.best; m.bestMoves = bm.moves;

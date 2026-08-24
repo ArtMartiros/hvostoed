@@ -709,6 +709,7 @@ const buildPack = (raw, mode) =>
       id: i,
       mode: mode || "goal",
       rocks: lv.rocks || [],
+      bridges: lv.bridges || [],
       snakes: lv.snakes.map((s, si) => ({
         id: "s" + si,
         color: colors[si],
@@ -736,46 +737,53 @@ const уровней = (n) => n + " " + plural(n, "уровень", "уровн�
 
 const withIds = (snakes) => snakes.map((s, i) =>
   ({ id: "s" + i, spiky: !!s.spiky, sleep: !!s.sleep, cells: s.cells.map((c) => c.slice()) }));
-const NOROCKS = new Set();
+// доска = валуны и мосты; собирается из уровня в одном месте, чтобы игра,
+// планировщик и мастерская читали одно и то же
+const boardOf = (lv) => ({
+  rocks: new Set((lv.rocks || []).map(([x, y]) => ckey(x, y))),
+  bridges: new Set((lv.bridges || []).map(([x, y]) => ckey(x, y))),
+});
 
 function acceptCrafted(name, r, ordinal) {
   const lv = r.level, m = r.metrics;
   const snakes = lv.snakes.map((s) =>
     ({ cells: s.cells.map((c) => c.slice()), ...(s.spiky ? { spiky: true } : {}), ...(s.sleep ? { sleep: true } : {}) }));
-  const base = { w: lv.w, h: lv.h, snakes, preset: name, seed: r.seed,
+  const base = { w: lv.w, h: lv.h, snakes, bridges: lv.bridges || [], preset: name, seed: r.seed,
                  name: name.charAt(0).toUpperCase() + name.slice(1) + " " + ordinal };
   if (r.record) {
-    const plan = planLongest({ w: lv.w, h: lv.h }, withIds(snakes), NOROCKS);
+    const bd = boardOf(lv);
+    const plan = planLongest({ w: lv.w, h: lv.h }, withIds(snakes), bd);
     if (!plan) return null;
-    const got = replayPlan({ w: lv.w, h: lv.h }, withIds(snakes), plan, NOROCKS);
+    const got = replayPlan({ w: lv.w, h: lv.h }, withIds(snakes), plan, bd);
     if (got.broken || got.len < 2) return null;
     return { ...base, mode: "record", ceiling: got.len, proof: "beam", mass: m.mass,
       marks: [Math.round(got.len * 0.5), Math.round(got.len * 0.75), got.len],
       lesson: `${m.snakes} змей · ${клеток(m.mass)} · игра собирает ${got.len} за ${ходов(got.steps)}` };
   }
   const target = lv.len;
-  const plan = planGoal({ w: lv.w, h: lv.h, target }, withIds(snakes), NOROCKS);
+  const plan = planGoal({ w: lv.w, h: lv.h, target }, withIds(snakes), boardOf(lv));
   if (!plan) return null;
   if (plan.length < lv.moves.length) return null;   // игра нашла путь короче задуманного
   const marks = [];
   if (snakes.some((s) => s.spiky)) marks.push("колючую не съесть");
   if (snakes.some((s) => s.sleep)) marks.push("спящая не ходит");
+  if ((base.bridges || []).length) marks.push("над мостом луч проходит");
   return { ...base, mode: "goal", target,
     lesson: `Цель ${target} за ${ходов(plan.length)} · решений ${m.sols} · безопасных тапов ${Math.round(100 * m.safety)}%`
       + (marks.length ? " · " + marks.join(", ") : "") };
 }
 
 const craftedToLevel = (c, i) => {
-  const raw = { ...c, rocks: [] };
+  const raw = { ...c, rocks: [], bridges: c.bridges || [] };
   const colors = paintPack(raw);
-  return { ...raw, id: i, rocks: [],
+  return { ...raw, id: i, rocks: [], bridges: c.bridges || [],
     snakes: c.snakes.map((sn, si) =>
       ({ id: "s" + si, color: colors[si], spiky: !!sn.spiky, sleep: !!sn.sleep, cells: sn.cells })) };
 };
 
 const craftedToText = (c) => `  {
     name: ${JSON.stringify(c.name)}, lesson: ${JSON.stringify(c.lesson)},
-    w: ${c.w}, h: ${c.h}, ${c.mode === "record" ? `ceiling: ${c.ceiling}, proof: "beam", mass: ${c.mass}, marks: ${JSON.stringify(c.marks)}` : `target: ${c.target}`},
+    w: ${c.w}, h: ${c.h}, ${c.bridges && c.bridges.length ? `bridges: [${c.bridges.map(([x, y]) => `[${x}, ${y}]`).join(", ")}], ` : ""}${c.mode === "record" ? `ceiling: ${c.ceiling}, proof: "beam", mass: ${c.mass}, marks: ${JSON.stringify(c.marks)}` : `target: ${c.target}`},
     snakes: [
 ${c.snakes.map((sn) => "      { " + (sn.spiky ? "spiky: true, " : "") + (sn.sleep ? "sleep: true, " : "") +
     "cells: [" + sn.cells.map(([x, y]) => `[${x}, ${y}]`).join(", ") + "] },").join("\n")}
@@ -800,7 +808,12 @@ function occMap(snakes) {
   return m;
 }
 
-function raycast(snakes, sid, W, H, rockSet) {
+/* Доска — это валуны и мосты. Мост: луч всегда проходит НАД клеткой, что бы там
+   ни лежало, а тело едока ложится поверх чужого. Пересечься змеи могут только на
+   мосту, и занятость там никогда не читается — как раз потому, что луч через мост
+   не останавливается. Побочное правило, которое надо знать: змею, чей хвост лежит
+   на мосту, с этого направления не съесть — луч над ней пролетит. */
+function raycast(snakes, sid, W, H, board) {
   const s = snakes.find((q) => q.id === sid);
   const [dx, dy] = facing(s.cells);
   const occ = occMap(snakes);
@@ -809,7 +822,8 @@ function raycast(snakes, sid, W, H, rockSet) {
   for (;;) {
     x += dx; y += dy;
     if (x < 0 || y < 0 || x >= W || y >= H) return { kind: "edge", gap, dir: [dx, dy] };
-    if (rockSet.has(ckey(x, y))) return { kind: "rock", gap, hitCell: [x, y], dir: [dx, dy] };
+    if (board.rocks.has(ckey(x, y))) return { kind: "rock", gap, hitCell: [x, y], dir: [dx, dy] };
+    if (board.bridges.has(ckey(x, y))) { gap.push([x, y]); continue; }
     const hit = occ.get(ckey(x, y));
     if (hit) {
       if (hit.sid === sid) return { kind: "self", gap, hitCell: [x, y], dir: [dx, dy] };
@@ -851,11 +865,11 @@ const maxLen = (snakes) => Math.max(0, ...snakes.map((s) => s.cells.length));
 const stateKey = (snakes) =>
   snakes.map((s) => s.cells.map((c) => c.join(".")).join(";")).sort().join("|");
 
-function legalMoves(snakes, W, H, rockSet) {
+function legalMoves(snakes, W, H, board) {
   const out = [];
   for (const s of snakes) {
     if (s.sleep) continue;               // спящая не ходит, но её едят
-    const ray = raycast(snakes, s.id, W, H, rockSet);
+    const ray = raycast(snakes, s.id, W, H, board);
     if (ray.kind === "tail") out.push({ sid: s.id, next: applyEat(snakes, s.id, ray) });
     else if (ray.kind === "edge") out.push({ sid: s.id, next: snakes.filter((q) => q.id !== s.id) });
   }
@@ -864,7 +878,7 @@ function legalMoves(snakes, W, H, rockSet) {
 
 // Кратчайшая победа. Бюджет узлов общий на все глубины: если позиция безнадёжна,
 // перебор не имеет права подвесить вкладку — вернём null и отдадим ход эвристике.
-function planGoal(level, snakes, rockSet) {
+function planGoal(level, snakes, board) {
   const budget = { left: 150000 };
   let seq = null;
   const dfs = (sn, d, cap, path, seen) => {
@@ -873,7 +887,7 @@ function planGoal(level, snakes, rockSet) {
     const k = stateKey(sn) + "#" + d;
     if (seen.has(k)) return false;
     seen.add(k); budget.left--;
-    for (const m of legalMoves(sn, level.w, level.h, rockSet)) {
+    for (const m of legalMoves(sn, level.w, level.h, board)) {
       path.push({ k: stateKey(sn), sid: m.sid });
       if (dfs(m.next, d + 1, cap, path, seen)) return true;
       path.pop();
@@ -890,13 +904,13 @@ function planGoal(level, snakes, rockSet) {
 // и укладывается в полсекунды на самом плотном (29 змей).
 // Прогон плана до конца — им принимаем сгенерированные уровни: годен тот,
 // который проходит код самой игры, а не только механика генератора.
-function replayPlan(level, snakes, plan, rockSet) {
+function replayPlan(level, snakes, plan, board) {
   const map = new Map(plan.map((st) => [st.k, st.sid]));
   let sn = snakes, steps = 0;
   while (steps < 80) {
     const sid = map.get(stateKey(sn));
     if (sid == null) break;
-    const ray = raycast(sn, sid, level.w, level.h, rockSet);
+    const ray = raycast(sn, sid, level.w, level.h, board);
     if (ray.kind === "tail") sn = applyEat(sn, sid, ray);
     else if (ray.kind === "edge") sn = sn.filter((q) => q.id !== sid);
     else return { len: 0, steps, broken: true };
@@ -905,14 +919,14 @@ function replayPlan(level, snakes, plan, rockSet) {
   return { len: maxLen(sn), steps, broken: false };
 }
 
-function planLongest(level, snakes, rockSet) {
+function planLongest(level, snakes, board) {
   const total = (sn) => sn.reduce((t, s) => t + s.cells.length, 0);
   let layer = [{ sn: snakes, k: stateKey(snakes), from: null, sid: null }];
   let best = maxLen(snakes), bestNode = null;
   for (let d = 0; d < 60 && layer.length; d++) {
     const next = [], seen = new Set();
     for (const nd of layer) {
-      for (const m of legalMoves(nd.sn, level.w, level.h, rockSet)) {
+      for (const m of legalMoves(nd.sn, level.w, level.h, board)) {
         const k = stateKey(m.next);
         if (seen.has(k)) continue;
         seen.add(k);
@@ -936,14 +950,14 @@ function planLongest(level, snakes, rockSet) {
    ациклический и обход конечен. Бюджет узлов — предохранитель: не доказали за
    отведённое, отвечаем «может». Закончить партию раньше времени хуже, чем дать
    лишний ход по мёртвому полю. */
-function canGrow(level, snakes, rockSet, base) {
+function canGrow(level, snakes, board, base) {
   const seen = new Set([stateKey(snakes)]);
   const stack = [snakes];
   let visited = 0;
   while (stack.length) {
     if (++visited > 20000) return true;
     const st = stack.pop();
-    for (const m of legalMoves(st, level.w, level.h, rockSet)) {
+    for (const m of legalMoves(st, level.w, level.h, board)) {
       if (maxLen(m.next) > base) return true;
       const k = stateKey(m.next);
       if (seen.has(k)) continue;
@@ -1039,6 +1053,35 @@ function angleAt(P, s) {
 }
 
 /* ---------- отрисовка ---------- */
+/* Мост рисуется в два слоя, и это не украшение, а необходимость: на мосту почти
+   всегда лежит змея, поэтому настил под ней не виден вовсе. Настил идёт под
+   змеями (тёплая клетка пола), а угловые скобы — ПОВЕРХ них, чтобы клетка
+   читалась как проходимая, что бы на ней ни стояло. */
+function BridgeFloor({ x, y }) {
+  const cx = x * CS + CS / 2, cy = y * CS + CS / 2;
+  return (
+    <g>
+      <rect x={cx - 44} y={cy - 44} width="88" height="88" rx="18" fill="#E9DCB8" />
+      {[-26, -9, 9, 26].map((d) => (
+        <line key={d} x1={cx - 36} y1={cy + d} x2={cx + 36} y2={cy + d}
+          stroke="#D3C193" strokeWidth="7" strokeLinecap="round" />
+      ))}
+    </g>
+  );
+}
+
+function BridgeRail({ x, y }) {
+  const cx = x * CS + CS / 2, cy = y * CS + CS / 2, a = 40, b = 17;
+  const corner = (sx, sy) =>
+    "M" + (cx + sx * a) + " " + (cy + sy * (a - b)) + " L" + (cx + sx * a) + " " + (cy + sy * a) +
+    " L" + (cx + sx * (a - b)) + " " + (cy + sy * a);
+  return (
+    <g fill="none" stroke="#8A6E33" strokeWidth="9" strokeLinecap="round" strokeLinejoin="round" opacity="0.95">
+      {[[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([sx, sy]) => <path key={sx + "," + sy} d={corner(sx, sy)} />)}
+    </g>
+  );
+}
+
 function Rock({ x, y }) {
   const cx = x * CS + CS / 2, cy = y * CS + CS / 2;
   return (
@@ -1185,7 +1228,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
   const rafRef = useRef(null);
   const fxTimerRef = useRef(null);
   const crashTimerRef = useRef(null);
-  const rockSet = useMemo(() => new Set(level.rocks.map(([x, y]) => ckey(x, y))), [level]);
+  const board = useMemo(() => boardOf(level), [level]);
   const reduced = useMemo(
     () => typeof window !== "undefined" && window.matchMedia &&
           window.matchMedia("(prefers-reduced-motion: reduce)").matches, []
@@ -1200,8 +1243,8 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
   const hasBudget = !isRec && level.snakes.reduce((a, s) => a + s.cells.length, 0) > level.target;
   const slack = onBoard - level.target;
   const idle = phase === "idle";
-  const canEatAny = idle && snakes.some((s) => !s.sleep && raycast(snakes, s.id, level.w, level.h, rockSet).kind === "tail");
-  const canLaunchAny = idle && snakes.some((s) => !s.sleep && raycast(snakes, s.id, level.w, level.h, rockSet).kind === "edge");
+  const canEatAny = idle && snakes.some((s) => !s.sleep && raycast(snakes, s.id, level.w, level.h, board).kind === "tail");
+  const canLaunchAny = idle && snakes.some((s) => !s.sleep && raycast(snakes, s.id, level.w, level.h, board).kind === "edge");
 
   function showFx(next, ms) {
     clearTimeout(fxTimerRef.current);
@@ -1222,8 +1265,8 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
     const ml = maxLen(mv.finalSnakes);
     if (ml > runBest) { setRunBest(ml); if (isRec && hintsRef.current === 0) onRecord(ml); }
     // Цель — порог, а не финиш: пока змея может расти, партия продолжается.
-    const anyEat = mv.finalSnakes.some((s) => !s.sleep && raycast(mv.finalSnakes, s.id, level.w, level.h, rockSet).kind === "tail");
-    if (!anyEat && !canGrow(level, mv.finalSnakes, rockSet, ml)) {
+    const anyEat = mv.finalSnakes.some((s) => !s.sleep && raycast(mv.finalSnakes, s.id, level.w, level.h, board).kind === "tail");
+    if (!anyEat && !canGrow(level, mv.finalSnakes, board, ml)) {
       finish(mv.finalSnakes, ml, mv.launchedAfter);
       return;
     }
@@ -1353,7 +1396,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
     setToast(null); setFx(null);
     const s = snakes.find((q) => q.id === sid);
     if (s.sleep) { setToast("Спящая змея не ходит — её можно только съесть."); return; }
-    const ray = raycast(snakes, sid, level.w, level.h, rockSet);
+    const ray = raycast(snakes, sid, level.w, level.h, board);
     const nom = COLORS[s.color].nom;
     const Nom = nom.charAt(0).toUpperCase() + nom.slice(1);
     if (ray.kind === "tail") {
@@ -1388,8 +1431,8 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
     let sid = planRef.current.get(k);
     if (sid == null) {
       const plan = (isRec || best >= level.target)
-        ? planLongest(level, snakes, rockSet)
-        : (planGoal(level, snakes, rockSet) || planLongest(level, snakes, rockSet));
+        ? planLongest(level, snakes, board)
+        : (planGoal(level, snakes, board) || planLongest(level, snakes, board));
       if (!plan || !plan.length) {
         setToast(isRec || best >= level.target
           ? "Больше не вырасти — партию можно заканчивать."
@@ -1493,6 +1536,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
           </defs>
           <rect x="0" y="0" width={W} height={H} rx="20" fill="#ECF2DE" />
           {cells}
+          {(level.bridges || []).map(([x, y]) => <BridgeFloor key={"bf" + x + "-" + y} x={x} y={y} />)}
           {level.rocks.map(([x, y]) => <Rock key={"r" + x + "-" + y} x={x} y={y} />)}
           <g clipPath="url(#hv-clip)">
             {snakes.map((s) => (
@@ -1500,6 +1544,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
                 shaking={fx && fx.shakeId === s.id} onTap={tapSnake} />
             ))}
           </g>
+          {(level.bridges || []).map(([x, y]) => <BridgeRail key={"br" + x + "-" + y} x={x} y={y} />)}
           {fx && fx.ray && <RayView ray={fx.ray} from={fx.from} color={fx.color} />}
           {plus && (
             <text key={plus.key} className="hv-plus" x={plus.x * CS + CS / 2} y={plus.y * CS - 6}
@@ -1623,6 +1668,7 @@ const CRAFT_KNOBS = [
   { k: "decoys", nom: "Обманок",        min: 0, max: 10 },
   { k: "spiky",  nom: "из них колючих",  min: 0, max: (c) => c.decoys, sub: true },
   { k: "sleepy", nom: "из них спящих",   min: 0, max: (c) => Math.max(0, c.decoys - (c.spiky || 0)), sub: true },
+  { k: "bridges", nom: "Мостов",         min: 0, max: 4 },
 ];
 /* Разбор отказов человеческим языком: приёмка возвращает имя метрики, а игроку
    нужно знать, какую ручку отпустить. */
@@ -1867,7 +1913,7 @@ export default function App() {
       const cur = { ...PRESETS[name], ...(prev[name] || {}) };
       const got = typeof upd === "function" ? upd(cur) : upd;
       const keep = {};
-      for (const k of ["w", "h", "len", "moves", "decoys", "spiky", "sleepy", "voids", "peak", "breather"]) keep[k] = got[k];
+      for (const k of ["w", "h", "len", "moves", "decoys", "bridges", "spiky", "sleepy", "voids", "peak", "breather"]) keep[k] = got[k];
       const next = { ...prev, [name]: keep };
       try { localStorage.setItem("hv-craftcfg", JSON.stringify(next)); } catch (e) {}
       return next;

@@ -12,12 +12,12 @@ const grab = (n) => { const i = src.indexOf(`const ${n} = [`); const j = src.ind
 const mk = (lv) => lv.snakes.map((s, i) => ({ id: 's' + i, spiky: !!s.spiky, cells: s.cells.map((c) => c.slice()) }));
 
 // Независимый ответ: достижима ли где-нибудь длина больше base. Полный обход, без бюджета.
-function trueCanGrow(level, snakes, rockSet, base) {
+function trueCanGrow(level, snakes, board, base) {
   const seen = new Set([M.stateKey(snakes)]);
   const stack = [snakes];
   while (stack.length) {
     const st = stack.pop();
-    for (const mv of M.legalMoves(st, level.w, level.h, rockSet)) {
+    for (const mv of M.legalMoves(st, level.w, level.h, board)) {
       if (M.maxLen(mv.next) > base) return true;
       const k = M.stateKey(mv.next);
       if (seen.has(k)) continue;
@@ -32,19 +32,20 @@ for (const packName of ['RAW_LEVELS', 'RAW_LEVELS_VOID', 'RAW_FIELDS']) {
   const levels = grab(packName);
   console.log(`\n### ${packName}`);
   levels.forEach((lv, li) => {
-    const rockSet = new Set((lv.rocks || []).map(([x, y]) => M.ckey(x, y)));
+    const board = { rocks: new Set((lv.rocks || []).map(([x, y]) => M.ckey(x, y))),
+                      bridges: new Set((lv.bridges || []).map(([x, y]) => M.ckey(x, y))) };
     // жадно доигрываем партию до конца, на каждом шаге сверяя canGrow с перебором
     const seen = new Set();
     let sn = mk(lv), steps = 0, endedAt = null;
     for (; steps < 60; steps++) {
       const base = M.maxLen(sn);
-      const anyEat = sn.some((s) => M.raycast(sn, s.id, lv.w, lv.h, rockSet).kind === 'tail');
-      const mine = M.canGrow(lv, sn, rockSet, base);
-      const truth = trueCanGrow(lv, sn, rockSet, base);
+      const anyEat = sn.some((s) => M.raycast(sn, s.id, lv.w, lv.h, board).kind === 'tail');
+      const mine = M.canGrow(lv, sn, board, base);
+      const truth = trueCanGrow(lv, sn, board, base);
       states++;
       if (mine !== truth) { bad++; console.log(`  ! ${lv.name} ход ${steps}: canGrow=${mine}, правда=${truth}`); }
       if (!anyEat && !truth) { endedAt = steps; break; }
-      const opts = M.legalMoves(sn, lv.w, lv.h, rockSet)
+      const opts = M.legalMoves(sn, lv.w, lv.h, board)
         .map((m) => ({ m, len: M.maxLen(m.next) }))
         .sort((a, b) => b.len - a.len);
       if (!opts.length) { endedAt = steps; break; }

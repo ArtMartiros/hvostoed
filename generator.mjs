@@ -51,13 +51,14 @@ export function occSet(state, skip) {
   return o;
 }
 
-export function raycast(state, i, w, h) {
+export function raycast(state, i, w, h, bridges) {
   const occ = new Map();
   state.forEach((s, si) => s.cells.forEach((c, ci) => occ.set(ck(c), { si, ci, len: s.cells.length })));
   const s = state[i], d = facing(s.cells);
   let c = add(s.cells[0], d), gap = 0;
   for (;;) {
     if (!inside(w, h, c)) return { kind: 'edge', gap };
+    if (bridges && bridges.has(ck(c))) { gap++; c = add(c, d); continue; }   // луч идёт над мостом
     const hit = occ.get(ck(c));
     if (hit) {
       if (hit.si === i) return { kind: 'self', gap };
@@ -82,11 +83,13 @@ export function applyEat(state, i, ray) {
   return out;
 }
 
-export function movesOf(state, w, h) {
+export const bridgeSet = (lv) => new Set((lv.bridges || []).map(ck));
+
+export function movesOf(state, w, h, bridges) {
   const out = [];
   for (let i = 0; i < state.length; i++) {
     if (state[i].sleep) continue;          // спящая не ходит, но её едят
-    const r = raycast(state, i, w, h);
+    const r = raycast(state, i, w, h, bridges);
     if (r.kind === 'tail') out.push({ i, eat: true, prey: r.prey, gap: r.gap, ray: r });
     else if (r.kind === 'edge') out.push({ i, eat: false, gap: r.gap, ray: r });
   }
@@ -242,6 +245,7 @@ export function generate(cfg) {
   const moves = [];
   const forbidden = new Set(final.map(ck));
   let debt = 0;                                 // недобор зазоров, размазываем по оставшимся ходам
+  const allGaps = [];                           // клетки, через которые летят лучи решения — кандидаты в мосты
 
   for (let step = 0; step < M; step++) {
     const f = M - 1 - step;                     // строим с конца: шаг 0 — последний ход решения
@@ -267,7 +271,7 @@ export function generate(cfg) {
     state = done.state;
     moves.unshift(done.move);
     for (const s of state) for (const c of s.cells) forbidden.add(ck(c));
-    for (const c of done.gapCells) forbidden.add(ck(c));
+    for (const c of done.gapCells) { forbidden.add(ck(c)); allGaps.push(c); }
   }
   if (moves.length < cfg.minMoves) return null;
 
@@ -276,6 +280,25 @@ export function generate(cfg) {
      но сама не ходит. Обе никогда не участвуют в решении, поэтому пометка не может
      его сломать: она лишь меняет, чем обманка соблазняет. Совмещать не даём —
      колючая соня была бы просто валуном в форме змеи. */
+  /* Мосты. В обратном построении клетки зазоров обязаны оставаться пустыми — их и
+     держит запретный список. Мост снимает этот запрет ровно на одной клетке: луч
+     проходит над ней, значит на ней МОЖНО кого-то поселить. Отсюда правило —
+     мост без змеи на нём бессмыслен (это просто пол), поэтому обманку сажаем
+     прямо на него, а не рядом. Решению это не вредит: клетка была зазором,
+     то есть луч через неё и так летел. */
+  const bridges = [];
+  const busy = occSet(state);
+  const gapPool = shuffled(rnd, allGaps.filter((c) => !busy.has(ck(c))));
+  for (const c of gapPool) {
+    if (bridges.length >= (cfg.bridges || 0)) break;
+    const free = new Set(forbidden); free.delete(ck(c));
+    const len = 2 + Math.floor(rnd() * (cfg.decoyMax || 4));
+    const d = walk(rnd, cfg.w, cfg.h, len, free, c, null, 0.4);
+    if (!d) continue;
+    bridges.push(c.slice());
+    state = state.concat([{ id: cfg._nextId++, cells: d, decoy: true, onBridge: true }]);
+    for (const q of d) forbidden.add(ck(q));
+  }
   const decoys = [];
   for (let t = 0; t < cfg.decoys; t++) {
     const len = 2 + Math.floor(rnd() * (cfg.decoyMax || 4));
@@ -288,18 +311,20 @@ export function generate(cfg) {
     for (const c of d) forbidden.add(ck(c));
   }
   state = state.concat(decoys);
-  return { w: cfg.w, h: cfg.h, snakes: state, moves, len: cfg.len, decoys: decoys.length,
+  return { w: cfg.w, h: cfg.h, snakes: state, moves, len: cfg.len,
+           decoys: decoys.length + bridges.length, bridges,
            voids: moves.reduce((a, m) => a + m.gap, 0), want, peak: cfg.peak, breather: cfg.breather };
 }
 
 /* ---------- обязательная проверка вперёд ---------- */
 export function verify(lv) {
+  const br = bridgeSet(lv);
   let state = lv.snakes.map((s) => ({ id: s.id, cells: s.cells.map((c) => c.slice()) }));
   for (let m = 0; m < lv.moves.length; m++) {
     const mv = lv.moves[m];
     const i = state.findIndex((s) => s.id === mv.eater);
     if (i < 0) return { ok: false, at: m, why: 'едок пропал' };
-    const r = raycast(state, i, lv.w, lv.h);
+    const r = raycast(state, i, lv.w, lv.h, br);
     if (r.kind !== 'tail') return { ok: false, at: m, why: 'луч не в хвост, а ' + r.kind };
     if (state[r.prey].id !== mv.prey) return { ok: false, at: m, why: 'луч попал не в ту змею' };
     if (r.gap !== mv.gap) return { ok: false, at: m, why: `зазор ${r.gap} вместо ${mv.gap}` };

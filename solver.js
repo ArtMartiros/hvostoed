@@ -24,7 +24,7 @@ function occMap(snakes) {
   return m;
 }
 
-function raycast(snakes, i, W, H, rockSet) {
+function raycast(snakes, i, W, H, board) {
   const s = snakes[i];
   const [dx, dy] = facing(s.cells);
   const occ = occMap(snakes);
@@ -33,7 +33,8 @@ function raycast(snakes, i, W, H, rockSet) {
   for (;;) {
     x += dx; y += dy;
     if (x < 0 || y < 0 || x >= W || y >= H) return { kind: 'edge', gap };
-    if (rockSet.has(ck(x, y))) return { kind: 'rock' };
+    if (board.rocks.has(ck(x, y))) return { kind: 'rock' };
+    if (board.bridges.has(ck(x, y))) { gap.push([x, y]); continue; }   // луч идёт над мостом
     const hit = occ.get(ck(x, y));
     if (hit) {
       if (hit.si === i) return { kind: 'self' };
@@ -67,7 +68,8 @@ const maxLen = (s) => Math.max(0, ...s.map((x) => x.cells.length));
 // Полный перебор с метриками. moveCap: ограничение длины решения (null = без лимита)
 function solve(lv, { allowLaunch, moveCap }) {
   const W = lv.w, H = lv.h;
-  const rockSet = new Set((lv.rocks || []).map(([x, y]) => ck(x, y)));
+  const board = { rocks: new Set((lv.rocks || []).map(([x, y]) => ck(x, y))),
+                  bridges: new Set((lv.bridges || []).map(([x, y]) => ck(x, y))) };
   const seen = new Set();
   let best = 0, sols = 0, minMoves = Infinity, bestSeq = null;
   const CAP = 500;
@@ -86,7 +88,7 @@ function solve(lv, { allowLaunch, moveCap }) {
     if (sols >= CAP) return;
     for (let i = 0; i < snakes.length; i++) {
       if (snakes[i].sleep) continue;          // спящая не ходит, но её едят
-      const r = raycast(snakes, i, W, H, rockSet);
+      const r = raycast(snakes, i, W, H, board);
       if (r.kind === 'tail') dfs(applyEat(snakes, i, r), depth + 1, seq.concat(['eat s' + i + '>s' + r.target]));
       else if (r.kind === 'edge' && allowLaunch) dfs(snakes.filter((_, si) => si !== i), depth + 1, seq.concat(['launch s' + i]));
       if (sols >= CAP) return;
@@ -98,7 +100,8 @@ function solve(lv, { allowLaunch, moveCap }) {
 
 function geometry(lv) {
   const seenC = new Set();
-  const rockSet = new Set((lv.rocks || []).map(([x, y]) => ck(x, y)));
+  const board = { rocks: new Set((lv.rocks || []).map(([x, y]) => ck(x, y))),
+                  bridges: new Set((lv.bridges || []).map(([x, y]) => ck(x, y))) };
   for (const [x, y] of lv.rocks || []) {
     if (x < 0 || y < 0 || x >= lv.w || y >= lv.h) return 'валун вне поля';
   }
@@ -109,7 +112,7 @@ function geometry(lv) {
       if (x < 0 || y < 0 || x >= lv.w || y >= lv.h) return 'клетка вне поля';
       const k = ck(x, y);
       if (seenC.has(k)) return 'пересечение змей: ' + k;
-      if (rockSet.has(k)) return 'змея на валуне: ' + k;
+      if (board.rocks.has(k)) return 'змея на валуне: ' + k;
       seenC.add(k);
       if (j > 0) {
         const [px, py] = s.cells[j - 1];
