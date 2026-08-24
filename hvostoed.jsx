@@ -714,6 +714,7 @@ const buildPack = (raw, mode) =>
       rocks: lv.rocks || [],
       bridges: lv.bridges || [],
       turns: lv.turns || [],
+      portals: lv.portals || [],
       snakes: lv.snakes.map((s, si) => ({
         id: "s" + si,
         color: colors[si],
@@ -755,6 +756,7 @@ const boardOf = (lv) => ({
   rocks: new Set((lv.rocks || []).map(([x, y]) => ckey(x, y))),
   bridges: new Set((lv.bridges || []).map(([x, y]) => ckey(x, y))),
   turns: new Map((lv.turns || []).map(([x, y, a, b]) => [ckey(x, y), a + b])),
+  gates: new Map((lv.portals || []).map(([x, y, u, v]) => [ckey(x, y), [u, v]])),
 });
 
 function acceptCrafted(name, r, ordinal, cfg) {
@@ -763,6 +765,7 @@ function acceptCrafted(name, r, ordinal, cfg) {
     ({ cells: s.cells.map((c) => c.slice()), ...(s.spiky ? { spiky: true } : {}),
        ...(s.sleep ? { sleep: true } : {}), ...(s.apple ? { apple: true } : {}) }));
   const base = { w: lv.w, h: lv.h, snakes, bridges: lv.bridges || [], turns: lv.turns || [],
+                 portals: lv.portals || [],
                  preset: name, seed: r.seed, cfg: knobsOf(cfg),
                  name: name.charAt(0).toUpperCase() + name.slice(1) + " " + ordinal };
   if (r.record) {
@@ -793,6 +796,7 @@ function acceptCrafted(name, r, ordinal, cfg) {
   if (snakes.some((s) => s.sleep && !s.apple)) marks.push("спящая не ходит");
   if ((base.bridges || []).length) marks.push("над мостом луч проходит");
   if ((base.turns || []).length) marks.push("колено загибает луч");
+  if ((base.portals || []).length) marks.push("портал уносит луч");
   return { ...base, mode: "goal", target, plan: sids,
     lesson: `Цель ${target} за ${ходов(plan.length)} · решений ${m.sols} · безопасных тапов ${Math.round(100 * m.safety)}%`
       + (marks.length ? " · " + marks.join(", ") : "") };
@@ -807,9 +811,10 @@ const knobsOf = (c) => {
 };
 
 const craftedToLevel = (c, i) => {
-  const raw = { ...c, rocks: [], bridges: c.bridges || [], turns: c.turns || [] };
+  const raw = { ...c, rocks: [], bridges: c.bridges || [], turns: c.turns || [], portals: c.portals || [] };
   const colors = paintPack(raw);
-  return { ...raw, id: i, rocks: [], bridges: c.bridges || [], turns: c.turns || [], plan: c.plan || null,
+  return { ...raw, id: i, rocks: [], bridges: c.bridges || [], turns: c.turns || [],
+    portals: c.portals || [], plan: c.plan || null,
     snakes: c.snakes.map((sn, si) =>
       ({ id: "s" + si, color: colors[si], spiky: !!sn.spiky, sleep: !!sn.sleep || !!sn.apple,
          apple: !!sn.apple, cells: sn.cells })) };
@@ -817,7 +822,7 @@ const craftedToLevel = (c, i) => {
 
 const craftedToText = (c) => `  {
     name: ${JSON.stringify(c.name)}, lesson: ${JSON.stringify(c.lesson)},
-    w: ${c.w}, h: ${c.h}, ${c.bridges && c.bridges.length ? `bridges: [${c.bridges.map(([x, y]) => `[${x}, ${y}]`).join(", ")}], ` : ""}${c.turns && c.turns.length ? `turns: [${c.turns.map(([x, y, a, b]) => `[${x}, ${y}, "${a}", "${b}"]`).join(", ")}], ` : ""}${c.mode === "record" ? `ceiling: ${c.ceiling}, proof: "beam", mass: ${c.mass}, marks: ${JSON.stringify(c.marks)}` : `target: ${c.target}`},
+    w: ${c.w}, h: ${c.h}, ${c.bridges && c.bridges.length ? `bridges: [${c.bridges.map(([x, y]) => `[${x}, ${y}]`).join(", ")}], ` : ""}${c.turns && c.turns.length ? `turns: [${c.turns.map(([x, y, a, b]) => `[${x}, ${y}, "${a}", "${b}"]`).join(", ")}], ` : ""}${c.portals && c.portals.length ? `portals: [${c.portals.map((p) => `[${p.join(", ")}]`).join(", ")}], ` : ""}${c.mode === "record" ? `ceiling: ${c.ceiling}, proof: "beam", mass: ${c.mass}, marks: ${JSON.stringify(c.marks)}` : `target: ${c.target}`},
     plan: ${JSON.stringify(c.plan || [])},
     snakes: [
 ${c.snakes.map((sn) => "      { " + (sn.spiky ? "spiky: true, " : "") + (sn.apple ? "apple: true, " : "") + (sn.sleep && !sn.apple ? "sleep: true, " : "") +
@@ -856,7 +861,9 @@ function raycast(snakes, sid, W, H, board) {
   const occ = occMap(snakes);
   let [x, y] = s.cells[0];
   const gap = [];
-  for (;;) {
+  const cap = 4 * W * H + 8;                    // порталы можно замкнуть в кольцо
+  for (let step = 0; ; step++) {
+    if (step > cap) return { kind: "loop", gap, dir: [dx, dy] };
     x += dx; y += dy;
     if (x < 0 || y < 0 || x >= W || y >= H) return { kind: "edge", gap, dir: [dx, dy] };
     if (board.rocks.has(ckey(x, y))) return { kind: "rock", gap, hitCell: [x, y], dir: [dx, dy] };
@@ -871,6 +878,12 @@ function raycast(snakes, sid, W, H, board) {
       if (hit.ci === 0) return { kind: "head", target: hit.sid, gap, hitCell: [x, y], dir: [dx, dy] };
       return { kind: "body", target: hit.sid, gap, hitCell: [x, y], dir: [dx, dy] };
     }
+    // портал: вход и выход, направление сохраняется. Занятость проверена выше, значит
+    // лёгшая на вход змея его перекрывает — то же правило, что у колена.
+    const g = board.gates && board.gates.get(ckey(x, y));
+    // шаг здесь прибавляется СВЕРХУ цикла, поэтому встаём на клетку перед выходом:
+    // сама клетка выхода обязана быть прочитана как обычная (там может кто-то лежать)
+    if (g) { gap.push([x, y]); x = g[0] - dx; y = g[1] - dy; continue; }
     const t = board.turns.get(ckey(x, y));
     if (t) {
       const from = sideName([-dx, -dy]);
@@ -1077,12 +1090,20 @@ function buildLaunchMove(snakes, sid, ray) {
 /* ---------- геометрия для плавного скольжения ---------- */
 const toPx = ([x, y]) => [x * CS + CS / 2, y * CS + CS / 2];
 
+/* Соседние клетки всегда ровно на CS друг от друга, и вся геометрия скольжения на
+   этом стоит: путь размечен по индексу, а не по длине. Портал ломает ровно это —
+   два соседних по индексу пикселя оказываются в разных концах доски. Поэтому такой
+   отрезок не интерполируем, а перескакиваем: по времени он занимает тот же шаг,
+   по месту — мгновенный. */
+const jumped = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) > CS * 1.5;
+
 function ptAt(P, s) {
   const maxI = P.length - 1;
   let i = Math.floor(s / CS);
   if (i < 0) i = 0;
   if (i >= maxI) return [P[maxI][0], P[maxI][1]];
   const f = (s - i * CS) / CS;
+  if (jumped(P[i], P[i + 1])) return f < 0.5 ? [P[i][0], P[i][1]] : [P[i + 1][0], P[i + 1][1]];
   return [P[i][0] + (P[i + 1][0] - P[i][0]) * f, P[i][1] + (P[i + 1][1] - P[i][1]) * f];
 }
 
@@ -1096,10 +1117,17 @@ function samplePts(P, s0, s1) {
   return res;
 }
 
-const dStr = (pts) => pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+// разрыв на портале рисуем как новый подпуть, иначе тело протянется через всю доску
+const dStr = (pts) => pts.map((p, i) =>
+  (i && !jumped(pts[i - 1], p) ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
 
 function segAngle(P, i) {
-  return (Math.atan2(P[i + 1][1] - P[i][1], P[i + 1][0] - P[i][0]) * 180) / Math.PI;
+  // за порталом направление сохраняется, поэтому угол берём у ближайшего обычного отрезка
+  let j = i;
+  while (j < P.length - 1 && jumped(P[j], P[j + 1])) j++;
+  while (j > 0 && jumped(P[j], P[j + 1])) j--;
+  if (j >= P.length - 1 || jumped(P[j], P[j + 1])) return 0;
+  return (Math.atan2(P[j + 1][1] - P[j][1], P[j + 1][0] - P[j][0]) * 180) / Math.PI;
 }
 function lerpAngle(a, b, t) {
   let d = ((b - a + 540) % 360) - 180;
@@ -1169,6 +1197,38 @@ function BridgeRail({ x, y }) {
   );
 }
 
+/* Портал направлен: луч ныряет во ВХОД и выходит из ВЫХОДА тем же направлением.
+   Поэтому вход — тёмный колодец со стрелками внутрь, выход — светлый со стрелками
+   наружу; пара красится одним цветом, чтобы было видно, что с чем связано.
+   Рисуется только на полу: перекрытый змеёй портал не работает, и прятаться под
+   ней — честное поведение, ровно как у колена. */
+const GATE_HUE = ["#7A6BC4", "#C98A2E"];
+function Gate({ x, y, into, pair }) {
+  const cx = x * CS + CS / 2, cy = y * CS + CS / 2;
+  const rim = GATE_HUE[pair % GATE_HUE.length];
+  const arrow = (ax, ay) => {
+    const n = [-ay, ax];
+    const r0 = into ? 40 : 22, r1 = into ? 25 : 37;    // внутрь или наружу
+    return "M" + (cx + ax * r0 - n[0] * 9) + " " + (cy + ay * r0 - n[1] * 9) +
+           " L" + (cx + ax * r1) + " " + (cy + ay * r1) +
+           " L" + (cx + ax * r0 + n[0] * 9) + " " + (cy + ay * r0 + n[1] * 9);
+  };
+  return (
+    <g>
+      <rect x={x * CS + 5} y={y * CS + 5} width={CS - 10} height={CS - 10} rx="16"
+        fill={into ? "#241C3A" : "#EDE7FA"} />
+      <circle cx={cx} cy={cy} r="30" fill="none" stroke={rim} strokeWidth="8" />
+      {/* середина у обоих ПУСТАЯ: сплошная заливка на выходе читалась пуговицей,
+          а не отверстием, из которого луч выходит */}
+      <circle cx={cx} cy={cy} r="14" fill={into ? "#0F0A1C" : "#FFFDF4"}
+        stroke={into ? "none" : rim} strokeWidth="5" />
+      <g fill="none" stroke={rim} strokeWidth="7" strokeLinecap="round" strokeLinejoin="round">
+        {[[1, 0], [-1, 0], [0, 1], [0, -1]].map(([ax, ay]) => <path key={ax + "," + ay} d={arrow(ax, ay)} />)}
+      </g>
+    </g>
+  );
+}
+
 function Rock({ x, y }) {
   const cx = x * CS + CS / 2, cy = y * CS + CS / 2;
   return (
@@ -1214,7 +1274,8 @@ function SnakeView({ snake, shaking, onTap, regRef }) {
 
   // полоски на хвосте (обычные) / шипы (колючая)
   let tailDeco = null;
-  if (hasBody && !snake.spiky) {
+  // на разрыве портала направление отрезка бессмысленно — полоски и шипы там не рисуем
+  if (hasBody && !snake.spiky && !jumped(pts[pts.length - 2], pts[pts.length - 1])) {
     const t = pts[pts.length - 1], pv = pts[pts.length - 2];
     const td = [(pv[0] - t[0]) / CS, (pv[1] - t[1]) / CS];
     const tp = [-td[1], td[0]];
@@ -1234,6 +1295,7 @@ function SnakeView({ snake, shaking, onTap, regRef }) {
     const tris = [];
     for (let i = 1; i < pts.length; i++) {
       const a = pts[i - 1], b = pts[i];
+      if (jumped(a, b)) continue;
       const dx = (a[0] - b[0]) / CS, dy = (a[1] - b[1]) / CS;
       const nx = -dy, ny = dx;
       const side = i % 2 ? 1 : -1;
@@ -1295,7 +1357,7 @@ function RayView({ ray, from, color }) {
   const x2 = ray.hitCell ? ray.hitCell[0] * CS + CS / 2 - ray.dir[0] * 34 : tail[0] + ray.dir[0] * CS * 0.62;
   const y2 = ray.hitCell ? ray.hitCell[1] * CS + CS / 2 - ray.dir[1] * 34 : tail[1] + ray.dir[1] * CS * 0.62;
   pts.push([x2, y2]);
-  const dPath = "M" + pts.map((q) => q[0].toFixed(1) + " " + q[1].toFixed(1)).join(" L");
+  const dPath = dStr(pts);
   return (
     <g style={{ pointerEvents: "none" }}>
       <path d={dPath} fill="none" stroke={color} strokeWidth="10"
@@ -1548,6 +1610,8 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
       crash(Nom + " змея смотрит на собственный хвост — уроборос запрещён.", sid, ray, s.cells[0]);
     } else if (ray.kind === "rock") {
       crash(Nom + " змея врезалась в валун.", sid, ray, s.cells[0]);
+    } else if (ray.kind === "loop") {
+      crash(Nom + " змея загнала луч в кольцо порталов — выхода нет.", sid, ray, s.cells[0]);
     } else if (ray.kind === "turnBack") {
       crash(Nom + " змея ткнулась в стенку колена — с этой стороны глухо.", sid, ray, s.cells[0]);
     } else if (ray.kind === "spikyTail") {
@@ -1697,6 +1761,12 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
           <rect x="0" y="0" width={W} height={H} rx="20" fill="#ECF2DE" />
           {cells}
           {(level.turns || []).map(([x, y, a, b]) => <Turn key={"t" + x + "-" + y} x={x} y={y} a={a} b={b} />)}
+          {(level.portals || []).map(([x, y, u, v], i) => (
+            <g key={"g" + i}>
+              <Gate x={x} y={y} into pair={i} />
+              <Gate x={u} y={v} pair={i} />
+            </g>
+          ))}
           {(level.bridges || []).map(([x, y]) => <BridgeFloor key={"bf" + x + "-" + y} x={x} y={y} />)}
           {level.rocks.map(([x, y]) => <Rock key={"r" + x + "-" + y} x={x} y={y} />)}
           <g clipPath="url(#hv-clip)">
@@ -1860,8 +1930,10 @@ const CRAFT_KNOBS = [
     hint: "сама не ходит — сначала в решение, потом в обманки" },
   { k: "bridges", nom: "Мостов",         min: 0, max: 4 },
   { k: "turns",  nom: "Колен",           min: 0, max: 8 },
-  { k: "mechs",  nom: "Механик на уровень", min: 0, max: 5,
-    hint: "0 — все сразу; 1–2 читаются, пять поверх базового правила — нет" },
+  { k: "portals", nom: "Порталов",        min: 0, max: (c) => Math.max(0, Math.floor(c.len / 3) - 1),
+    hint: "вход и выход: луч ныряет и выходит тем же направлением" },
+  { k: "mechs",  nom: "Механик на уровень", min: 0, max: 6,
+    hint: "0 — все сразу; 1–2 читаются, шесть поверх базового правила — нет" },
 ];
 /* Разбор отказов человеческим языком: приёмка возвращает имя метрики, а игроку
    нужно знать, какую ручку отпустить. */
@@ -2144,7 +2216,7 @@ export default function App() {
       const cur = { ...PRESETS[name], ...(prev[name] || {}) };
       const got = typeof upd === "function" ? upd(cur) : upd;
       const keep = {};
-      for (const k of ["w", "h", "len", "moves", "decoys", "bridges", "turns", "spiky", "sleepy", "apples", "mechs", "voids", "peak", "breather"]) keep[k] = got[k];
+      for (const k of ["w", "h", "len", "moves", "decoys", "bridges", "turns", "spiky", "sleepy", "apples", "portals", "mechs", "voids", "peak", "breather"]) keep[k] = got[k];
       const next = { ...prev, [name]: keep };
       try { localStorage.setItem("hv-craftcfg", JSON.stringify(next)); } catch (e) {}
       return next;

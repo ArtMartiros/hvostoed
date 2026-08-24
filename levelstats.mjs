@@ -157,6 +157,33 @@ export function marks(lv) {
            sleepUse: share(lv.snakes.filter((s) => s.sleep && !s.apple)) };
 }
 
+/* Работает ли РЕЛЬЕФ. Мост, колено и портал — клетки пола: если луч решения по ним
+   ни разу не идёт, они украшение, а не механика. Портал вдобавок коварен — змея
+   может просто лежать сквозь него от начала до конца, и ни один ход его не тронет. */
+export function terrain(lv) {
+  const br = G.boardOf(lv);
+  const seen = new Set();
+  let state = G.stateOf(lv);
+  for (const mv of lv.moves || []) {
+    const i = state.findIndex((s) => s.id === mv.eater);
+    if (i < 0) break;
+    const r = G.raycast(state, i, lv.w, lv.h, br);
+    if (r.kind !== 'tail') break;
+    for (const c of r.path) seen.add(c[0] + ',' + c[1]);
+    state = G.applyEat(state, i, r);
+  }
+  const share = (arr, key) => (arr.length ? arr.filter((a) => seen.has(key(a))).length / arr.length : 1);
+  const k2 = ([x, y]) => x + ',' + y;
+  const bridgeUse = share(lv.bridges || [], k2);
+  const turnUse = share(lv.turns || [], k2);
+  const gateUse = share(lv.portals || [], k2);
+  const all = (lv.bridges || []).length + (lv.turns || []).length + (lv.portals || []).length;
+  const hit = (lv.bridges || []).filter((c) => seen.has(k2(c))).length
+    + (lv.turns || []).filter((c) => seen.has(k2(c))).length
+    + (lv.portals || []).filter((c) => seen.has(k2(c))).length;
+  return { bridgeUse, turnUse, gateUse, terrainUse: all ? hit / all : 1 };
+}
+
 export function curve(lv, target) {
   const br = G.boardOf(lv);
   const win = target ? winner(lv, target) : null;

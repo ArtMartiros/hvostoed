@@ -14,6 +14,7 @@ const boardOf = (lv) => ({
   rocks: new Set((lv.rocks || []).map(([x, y]) => M.ckey(x, y))),
   bridges: new Set((lv.bridges || []).map(([x, y]) => M.ckey(x, y))),
   turns: new Map((lv.turns || []).map(([x, y, a, b]) => [M.ckey(x, y), a + b])),
+  gates: new Map((lv.portals || []).map(([x, y, u, v]) => [M.ckey(x, y), [u, v]])),
 });
 const mk = (lv) => lv.snakes.map((s, i) => ({ id: 's' + i, cells: s.cells.map((c) => c.slice()),
   spiky: !!s.spiky, sleep: !!s.sleep || !!s.apple, apple: !!s.apple }));

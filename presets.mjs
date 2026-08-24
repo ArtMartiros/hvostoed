@@ -13,24 +13,24 @@ import * as S from './levelstats.mjs';
 
 export const PRESETS = {
   ученик:   { w: 7,  h: 7,  len: 14, moves: 4,  maxGap: 3, voids: 5,  peak: 1, breather: 3, straightBias: 0.7,
-              decoys: 2, spiky: 0, sleepy: 1, apples: 1, mechs: 1, decoyMax: 3,
-              min: { decoyLive: 1, safety: 0.75, sols: 2, branch: 2 },
+              decoys: 2, spiky: 0, sleepy: 1, apples: 1, portals: 0, mechs: 1, decoyMax: 3,
+              min: { decoyLive: 1, safety: 0.75, sols: 2, branch: 2, terrainUse: 1 },
               max: { branch: 5, voidMiss: 2, runMax: 3 } },
   средний:  { w: 9,  h: 9,  len: 22, moves: 6,  maxGap: 4, voids: 12,  peak: 1, breather: 3, straightBias: 0.7,
-              decoys: 3, bridges: 1, turns: 2, spiky: 1, sleepy: 1, apples: 2, mechs: 2, decoyMax: 4,
-              min: { decoyLive: 1, safety: 0.65, sols: 3, branch: 2.5, farShare: 0.5, markUse: 1 },
+              decoys: 3, bridges: 1, turns: 2, spiky: 1, sleepy: 1, apples: 2, portals: 1, mechs: 2, decoyMax: 4,
+              min: { decoyLive: 1, safety: 0.65, sols: 3, branch: 2.5, farShare: 0.5, markUse: 1, terrainUse: 1 },
               max: { branch: 6, voidMiss: 4, runMax: 3 } },
   длинный:  { w: 10, h: 11, len: 34, moves: 9,  maxGap: 5, voids: 19, peak: 1, breather: 3, straightBias: 0.8,
-              decoys: 4, bridges: 1, turns: 3, spiky: 1, sleepy: 2, apples: 2, mechs: 3, decoyMax: 5,
-              min: { decoyLive: 0.75, safety: 0.6, sols: 3, branch: 3, farShare: 0.5, markUse: 1 },
+              decoys: 4, bridges: 1, turns: 3, spiky: 1, sleepy: 2, apples: 2, portals: 1, mechs: 3, decoyMax: 5,
+              min: { decoyLive: 0.75, safety: 0.6, sols: 3, branch: 3, farShare: 0.5, markUse: 1, terrainUse: 1 },
               max: { branch: 7, voidMiss: 5, runMax: 3 } },
   пустоты:  { w: 10, h: 11, len: 30, moves: 8,  maxGap: 5, voids: 22, peak: 1, breather: 3, straightBias: 0.85,
-              decoys: 5, bridges: 2, turns: 3, spiky: 1, sleepy: 2, apples: 2, mechs: 3, decoyMax: 4,
-              min: { decoyLive: 0.75, safety: 0.6, sols: 2, branch: 2.5, farShare: 0.7, avgGap: 1.3, markUse: 1 },
+              decoys: 5, bridges: 2, turns: 3, spiky: 1, sleepy: 2, apples: 2, portals: 1, mechs: 3, decoyMax: 4,
+              min: { decoyLive: 0.75, safety: 0.6, sols: 2, branch: 2.5, farShare: 0.7, avgGap: 1.3, markUse: 1, terrainUse: 1 },
               max: { branch: 7, voidMiss: 5, runMax: 3 } },
   простор:  { w: 12, h: 16, len: 52, moves: 13, maxGap: 5, voids: 33, peak: 1, breather: 3, straightBias: 0.8,
-              decoys: 8, bridges: 2, turns: 4, spiky: 2, sleepy: 3, apples: 3, mechs: 0, decoyMax: 5, record: true,
-              min: { decoyLive: 0.6, branch: 3, farShare: 0.6, avgGap: 1.2, alive: 0.2, markUse: 1 },
+              decoys: 8, bridges: 2, turns: 4, spiky: 2, sleepy: 3, apples: 3, portals: 2, mechs: 0, decoyMax: 5, record: true,
+              min: { decoyLive: 0.6, branch: 3, farShare: 0.6, avgGap: 1.2, alive: 0.2, markUse: 1, terrainUse: 1 },
               max: { branch: 8, alive: 0.65, voidMiss: 7, runMax: 3 } },
 };
 
@@ -65,9 +65,10 @@ function decoyLiveness(lv) {
 export function measureCheap(lv, preset) {
   const sh = S.shape(lv, preset.record ? 120 : 50, lv.len * 7 + 1);
   const cv = S.curve(lv, null) || {};
-  const mk = S.marks(lv);
+  const mk = S.marks(lv), tr = S.terrain(lv);
   return { decoyLive: decoyLiveness(lv), starts: sh.starts, branch: sh.branch,
     markUse: mk.markUse, spikyUse: mk.spikyUse, sleepUse: mk.sleepUse,
+    terrainUse: tr.terrainUse, gateUse: tr.gateUse, bridgeUse: tr.bridgeUse, turnUse: tr.turnUse,
     voids: cv.voids, voidMiss: cv.voidMiss, runMax: cv.runMax, restShare: cv.restShare,
     tiltWant: cv.tiltWant, tiltGap: cv.tiltGap, gaps: cv.gaps,
     farShare: sh.farShare, avgGap: sh.avgGap, randMed: sh.randMed, randTop: sh.randTop,
@@ -104,7 +105,7 @@ export function measure(lv, preset) {
 }
 
 // какие поля проверяются на дешёвом заходе — остальные ждут дорогого
-const CHEAP = new Set(['decoyLive', 'starts', 'branch', 'farShare', 'avgGap', 'voidMiss', 'runMax', 'tiltGap', 'restShare', 'markUse', 'spikyUse', 'sleepUse']);
+const CHEAP = new Set(['decoyLive', 'starts', 'branch', 'farShare', 'avgGap', 'voidMiss', 'runMax', 'tiltGap', 'restShare', 'markUse', 'spikyUse', 'sleepUse', 'terrainUse', 'gateUse', 'bridgeUse', 'turnUse']);
 function checkSome(p, m, cheapOnly) {
   const fail = [];
   for (const [k, v] of Object.entries(p.min || {})) {
@@ -130,7 +131,7 @@ export function voidCeiling(p) {
   /* Ограничение на число механик может выкинуть колена, а весь запас сверх плоского
      потолка держится именно на них. Считаем по худшему: доля уровней, где колена
      уцелели, — иначе ползунок обещает то, чего на этом сиде может не быть. */
-  const kinds = ['bridges', 'turns', 'apples', 'spiky', 'sleepy'].filter((k) => (p[k] || 0) > 0).length;
+  const kinds = ['bridges', 'turns', 'apples', 'spiky', 'sleepy', 'portals'].filter((k) => (p[k] || 0) > 0).length;
   const keep = p.mechs > 0 && kinds > p.mechs ? p.mechs / kinds : 1;
   // Колена снимают требование длинных ПРЯМЫХ участков, из которого потолок и брался.
   // Замер на «пустотах» (цель 30): без колен доступно ~16, при трёх ~22, при шести ~25,

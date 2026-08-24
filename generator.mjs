@@ -54,6 +54,7 @@ export function boardOf(lv) {
   return {
     bridges: new Set((lv.bridges || []).map(ck)),
     turns: new Map((lv.turns || []).map(([x, y, a, b]) => [ck([x, y]), tileKey(a, b)])),
+    gates: new Map((lv.portals || []).map(([x, y, u, v]) => [ck([x, y]), [u, v]])),
   };
 }
 export const facing = (cells) => sub(cells[0], cells[1]);
@@ -68,13 +69,16 @@ export function occSet(state, skip) {
 
 export function raycast(state, i, w, h, board) {
   const bridges = board && board.bridges, turns = board && board.turns;
+  const gates = board && board.gates;
   const occ = new Map();
   state.forEach((s, si) => s.cells.forEach((c, ci) => occ.set(ck(c), { si, ci, len: s.cells.length })));
   const s = state[i];
   let d = facing(s.cells);
   let c = add(s.cells[0], d);
   const path = [];
-  for (;;) {
+  const cap = 4 * w * h + 8;                        // порталы можно замкнуть в кольцо
+  for (let step = 0; ; step++) {
+    if (step > cap) return { kind: 'loop', gap: path.length, path, dir: d };
     if (!inside(w, h, c)) return { kind: 'edge', gap: path.length, path, dir: d };
     if (bridges && bridges.has(ck(c))) { path.push(c); c = add(c, d); continue; }   // луч идёт над мостом
     const hit = occ.get(ck(c));
@@ -86,6 +90,10 @@ export function raycast(state, i, w, h, board) {
           : { kind: 'tail', prey: hit.si, gap: path.length, path, dir: d };
       return { kind: 'block', gap: path.length, path, dir: d };
     }
+    // портал: вход и выход, направление сохраняется. Занятость проверена выше,
+    // значит лёгшая на вход змея его перекрывает — то же правило, что у колена.
+    const g = gates && gates.get(ck(c));
+    if (g) { path.push(c); c = g.slice(); continue; }
     const t = turns && turns.get(ck(c));
     if (t) {
       const from = sideName([-d[0], -d[1]]);
@@ -139,8 +147,11 @@ export function walk(rnd, w, h, len, blocked, start, firstDir, straightBias) {
     let dir = firstDir ? firstDir.slice() : null;
     let dead = false;
     while (cells.length < len) {
+      // firstDir задаёт первый шаг ЖЁСТКО: за порталом луч обязан продолжить тем же
+      // направлением, каким вошёл, иначе портал в решении не собрать
+      const force = cells.length === 1 && firstDir ? firstDir : null;
       const opts = [];
-      for (const d of DIRS) {
+      for (const d of force ? [force] : DIRS) {
         const n = add(cur, d);
         if (!inside(w, h, n) || blocked.has(ck(n)) || used.has(ck(n))) continue;
         opts.push({ d, n, straight: dir && d[0] === dir[0] && d[1] === dir[1] });
@@ -152,6 +163,55 @@ export function walk(rnd, w, h, len, blocked, start, firstDir, straightBias) {
     }
     if (!dead && cells.length === len) return cells;
     if (start && firstDir) return null;      // жёстко заданное начало — второй попытки нет
+  }
+  return null;
+}
+
+/* Финальная змея, продетая сквозь порталы.
+
+   Портал направлен: вход и выход. Луч, дошедший до входа, продолжается от выхода
+   ТЕМ ЖЕ направлением. Тело ложится вдоль луча, значит и оно продето сквозь портал
+   и лежит на доске двумя кусками — так и задумано.
+
+   Строим отрезками. Отрезок кончается в клетке X; следующий начинается в клетке E
+   где-то ещё и обязан сделать первый шаг в ту же сторону, каким кончился предыдущий.
+   Луч идёт по убыванию индексов, поэтому портал E→X при таком условии сохраняет
+   направление сам собой.
+
+   Отрезок не короче трёх клеток: у куска должны быть голова и шея по одну сторону
+   разрыва, иначе у змеи нет направления взгляда. */
+function walkGated(rnd, cfg) {
+  const n = cfg.portals || 0;
+  if (n <= 0) {
+    const c = walk(rnd, cfg.w, cfg.h, cfg.len, new Set(), null, null, cfg.straightBias);
+    return c ? { cells: c, portals: [] } : null;
+  }
+  const parts = n + 1;
+  if (cfg.len < parts * 3) return null;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const runs = new Array(parts).fill(3);
+    for (let left = cfg.len - parts * 3; left > 0; left--) runs[Math.floor(rnd() * parts)]++;
+    let cells = [], portals = [], blocked = new Set(), dir = null, ok = true;
+    for (let r = 0; r < parts && ok; r++) {
+      let part = null, entry = null;
+      if (r === 0) part = walk(rnd, cfg.w, cfg.h, runs[0], blocked, null, null, cfg.straightBias);
+      else {
+        const exit = cells[cells.length - 1];
+        for (let t = 0; t < 40 && !part; t++) {
+          const e = [Math.floor(rnd() * cfg.w), Math.floor(rnd() * cfg.h)];
+          // портал должен уносить далеко — иначе это просто кривой шаг
+          if (blocked.has(ck(e)) || Math.abs(e[0] - exit[0]) + Math.abs(e[1] - exit[1]) < 4) continue;
+          part = walk(rnd, cfg.w, cfg.h, runs[r], blocked, e, dir, cfg.straightBias);
+          entry = e;
+        }
+      }
+      if (!part) { ok = false; break; }
+      if (r > 0) portals.push([entry[0], entry[1], cells[cells.length - 1][0], cells[cells.length - 1][1]]);
+      for (const c of part) blocked.add(ck(c));
+      cells = cells.concat(part);
+      dir = sub(part[part.length - 1], part[part.length - 2]);
+    }
+    if (ok && cells.length === cfg.len) return { cells, portals };
   }
   return null;
 }
@@ -174,25 +234,39 @@ export function walk(rnd, w, h, len, blocked, start, firstDir, straightBias) {
    с ним как с любой другой добычей, потому что это она и есть.
    Одно ограничение неизбежно: у одной клетки нет направления взгляда, значит
    ходить яблоко не может никогда — помечаем спящим. */
-function splitOptions(M, maxGap, minB) {
+const unit = (v) => Math.abs(v[0]) + Math.abs(v[1]) === 1;
+
+function splitOptions(M, maxGap, minB, gates) {
   const cells = M.cells, n = cells.length, out = [];
   for (let b = minB || 2; b <= n - 2; b++) {
     for (let k = 0; k <= maxGap && b + k <= n - 1; k++) {
       const aBodyLen = n - b - k;
       const first = sub(cells[b + k - 1] || cells[b - 1], cells[b + k]);
-      const tiles = [], thru = [];
+      // первый шаг луча из головы едока — только обычный: портал под головой
+      // перекрыт ею же, занятость проверяется раньше портала
+      if (!unit(first)) continue;
+      const tiles = [], thru = [], gated = [];
+      let d = first, ok = true;
       for (let t = b + k - 1; t >= b; t--) {
-        const dIn = sub(cells[t], cells[t + 1]);
-        const dOut = sub(cells[t - 1], cells[t]);
-        if (eq(dIn, dOut)) { thru.push(cells[t]); continue; }
-        tiles.push({ cell: cells[t], key: tileKey(sideName([-dIn[0], -dIn[1]]), sideName(dOut)) });
+        const g = gates && gates.get(ck(cells[t]));
+        if (g && g[0] === cells[t - 1][0] && g[1] === cells[t - 1][1]) {
+          thru.push(cells[t]);                     // клетка портала: плитке колена тут не место
+          gated.push(ck(cells[t]));
+          continue;                                // направление сохраняется
+        }
+        const step = sub(cells[t - 1], cells[t]);
+        if (!unit(step)) { ok = false; break; }    // разрыв без портала — вариант мёртвый
+        if (eq(d, step)) { thru.push(cells[t]); continue; }
+        tiles.push({ cell: cells[t], key: tileKey(sideName([-d[0], -d[1]]), sideName(step)) });
+        d = step;
       }
+      if (!ok) continue;
       if (aBodyLen >= 2) {
         if (!eq(sub(cells[b + k], cells[b + k + 1]), first)) continue;
-        out.push({ b, k, dir: first, needFirstExt: null, tiles, thru });
+        out.push({ b, k, dir: first, needFirstExt: null, tiles, thru, gated });
       } else {
         if (k === 0) continue;                     // без зазора хвост не дорастить, A[1] взять неоткуда
-        out.push({ b, k, dir: first, needFirstExt: add(cells[b + k], first, -1), tiles, thru });
+        out.push({ b, k, dir: first, needFirstExt: add(cells[b + k], first, -1), tiles, thru, gated });
       }
     }
   }
@@ -310,7 +384,7 @@ export function generate(cfg) {
      уровень разом — а это пять правил поверх базового, и читать такое нельзя.
      Подача по одной-двум за уровень — то, ради чего ручка и нужна. Выбор случайный
      по сиду: два уровня с одним конфигом окажутся про разное. */
-  const MECHS = ['bridges', 'turns', 'apples', 'spiky', 'sleepy'];
+  const MECHS = ['bridges', 'turns', 'apples', 'spiky', 'sleepy', 'portals'];
   if (cfg.mechs > 0) {
     const kinds = MECHS.filter((k) => (cfg[k] || 0) > 0);
     if (kinds.length > cfg.mechs) {
@@ -321,8 +395,10 @@ export function generate(cfg) {
     }
   }
 
-  const final = walk(rnd, cfg.w, cfg.h, cfg.len, new Set(), null, null, cfg.straightBias);
-  if (!final) return null;
+  const laid = walkGated(rnd, cfg);
+  if (!laid) return null;
+  const final = laid.cells, portals = laid.portals;
+  const gates = new Map(portals.map(([x, y, u, v]) => [ck([x, y]), [u, v]]));
 
   const M = cfg.moves;
   const want = gapPlan(M, cfg.voids == null ? M : cfg.voids, cfg.peak, cfg.breather, cfg.maxGap);
@@ -331,9 +407,11 @@ export function generate(cfg) {
   const moves = [];
   const forbidden = new Set(final.map(ck));
   const floor = { tiles: new Map(), thru: new Set() };   // пол: где колено, а где сквозной проход
+  for (const [x, y, u, v] of portals) { floor.thru.add(ck([x, y])); floor.thru.add(ck([u, v])); }
   let debt = 0;                                 // недобор зазоров, размазываем по оставшимся ходам
   const allGaps = [];                           // клетки, через которые летят лучи решения — кандидаты в мосты
   let applesLeft = cfg.apples || 0;
+  const gatesLeft = new Set(portals.map(([x, y]) => ck([x, y])));
 
   for (let step = 0; step < M; step++) {
     const f = M - 1 - step;                     // строим с конца: шаг 0 — последний ход решения
@@ -359,19 +437,30 @@ export function generate(cfg) {
     const rank = new Map(order.map((si, r) => [si, r]));
     const cand = [];
     for (const si of order)
-      for (const opt of shuffled(rnd, splitOptions(state[si], cfg.maxGap, wantApple ? 1 : 2)))
+      for (const opt of shuffled(rnd, splitOptions(state[si], cfg.maxGap, wantApple ? 1 : 2, gates)))
         cand.push({ si, opt });
     // при равном зазоре предпочитаем вариант, требующий меньше новых колен:
     // прямой луч читается быстрее, колена нужны там, где без них не выйдет
     for (const c of cand) c.fresh = floorFits(c.opt, floor, cfg.turns || 0);
     const fit = cand.filter((c) => c.fresh !== null);
+    /* Портал, через который решение ни разу не проходит, — декорация: змея просто
+       лежит сквозь него и лежит. Поэтому ходы, чей луч ныряет в ещё не задействованный
+       портал, идут первыми. Замер до этого: решение пользовалось порталом в 66%
+       случаев, остальное — украшение. */
+    const fresh = (c) => c.opt.gated.some((g) => gatesLeft.has(g));
     fit.sort((a, b) => ((b.opt.b === 1) - (a.opt.b === 1))
+      || (fresh(b) - fresh(a))
       || (Math.abs(a.opt.k - aim) - Math.abs(b.opt.k - aim))
       || (a.fresh - b.fresh) || (rank.get(a.si) - rank.get(b.si)));
     let done = null;
     for (const c of fit) {
       const r = unEat(rnd, cfg, state, c.si, c.opt);
-      if (r) { floorTake(c.opt, floor); done = r; if (c.opt.b === 1) applesLeft--; break; }
+      if (r) {
+        floorTake(c.opt, floor); done = r;
+        if (c.opt.b === 1) applesLeft--;
+        for (const g of c.opt.gated) gatesLeft.delete(g);
+        break;
+      }
     }
     if (!done) break;
     if (!isRest) debt += want[f] - done.move.gap;
@@ -451,7 +540,7 @@ export function generate(cfg) {
      ставить ПОСЛЕ обычных обманок (иначе следующая же встанет перед ловушкой),
      считать лучи по доске СО ВСЕМИ обманками, и запрещать телу приманки ложиться
      на подлёт к собственному хвосту — оно же его и заслоняло. */
-  const spots = trapSpots(state, moves, cfg, forbidden, { bridges, turns });
+  const spots = trapSpots(state, moves, cfg, forbidden, { bridges, turns, portals });
   const traps = [];
   const clear = new Set();                     // подлёт к уже поставленной приманке — не занимать
   let spikyLeft = wantSpiky;
@@ -472,7 +561,7 @@ export function generate(cfg) {
     for (const q of sp.path) clear.add(ck(q));
   }
   state = state.concat(traps);
-  return { w: cfg.w, h: cfg.h, snakes: state, moves, len: cfg.len,
+  return { w: cfg.w, h: cfg.h, snakes: state, moves, len: cfg.len, portals,
            mechs: MECHS.filter((k) => (cfg[k] || 0) > 0),
            apples: moves.filter((m) => m.apple).length,
            decoys: decoys.length + traps.length + bridges.length, bridges, turns,

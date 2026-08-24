@@ -27,11 +27,13 @@ function occMap(snakes) {
 
 function raycast(snakes, i, W, H, board) {
   const s = snakes[i];
-  const [dx, dy] = facing(s.cells);
+  let [dx, dy] = facing(s.cells);          // колено гнёт луч, поэтому не const
   const occ = occMap(snakes);
   let [x, y] = s.cells[0];
   const gap = [];
-  for (;;) {
+  const cap = 4 * W * H + 8;               // порталы можно замкнуть в кольцо
+  for (let step = 0; ; step++) {
+    if (step > cap) return { kind: 'loop' };
     x += dx; y += dy;
     if (x < 0 || y < 0 || x >= W || y >= H) return { kind: 'edge', gap };
     if (board.rocks.has(ck(x, y))) return { kind: 'rock' };
@@ -42,6 +44,8 @@ function raycast(snakes, i, W, H, board) {
       if (hit.ci === hit.len - 1) return hit.spiky ? { kind: 'spikyTail' } : { kind: 'tail', target: hit.si, gap };
       return { kind: 'block' };
     }
+    const g = board.gates.get(ck(x, y));            // портал: вход, выход, направление то же
+    if (g) { gap.push([x, y]); x = g[0] - dx; y = g[1] - dy; continue; }   // шаг прибавляется сверху
     const t = board.turns.get(ck(x, y));
     if (t) {                                          // колено: с открытой стороны гнёт, с закрытой — стена
       const from = dx === 1 ? 'w' : dx === -1 ? 'e' : dy === 1 ? 'n' : 's';
@@ -77,7 +81,8 @@ function solve(lv, { allowLaunch, moveCap }) {
   const W = lv.w, H = lv.h;
   const board = { rocks: new Set((lv.rocks || []).map(([x, y]) => ck(x, y))),
                   bridges: new Set((lv.bridges || []).map(([x, y]) => ck(x, y))),
-                  turns: new Map((lv.turns || []).map(([x, y, a, b]) => [ck(x, y), a + b])) };
+                  turns: new Map((lv.turns || []).map(([x, y, a, b]) => [ck(x, y), a + b])),
+                  gates: new Map((lv.portals || []).map(([x, y, u, v]) => [ck(x, y), [u, v]])) };
   const seen = new Set();
   let best = 0, sols = 0, minMoves = Infinity, bestSeq = null;
   const CAP = 500;
@@ -110,7 +115,8 @@ function geometry(lv) {
   const seenC = new Set();
   const board = { rocks: new Set((lv.rocks || []).map(([x, y]) => ck(x, y))),
                   bridges: new Set((lv.bridges || []).map(([x, y]) => ck(x, y))),
-                  turns: new Map((lv.turns || []).map(([x, y, a, b]) => [ck(x, y), a + b])) };
+                  turns: new Map((lv.turns || []).map(([x, y, a, b]) => [ck(x, y), a + b])),
+                  gates: new Map((lv.portals || []).map(([x, y, u, v]) => [ck(x, y), [u, v]])) };
   for (const [x, y] of lv.rocks || []) {
     if (x < 0 || y < 0 || x >= lv.w || y >= lv.h) return 'валун вне поля';
   }

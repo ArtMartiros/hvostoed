@@ -13,19 +13,26 @@ const logic = src.slice(src.indexOf('const SIDES = { n:'), src.indexOf('function
 const M = eval(logic + '\n({ raycast, applyEat, maxLen, stateKey, walkSids, ckey })');
 const WANT = Number(process.argv[2] || 5);
 
+/* Отдельным прогоном — доска, где включено ВСЁ сразу. Ограничение на число механик
+   в пресетах случайным образом выкидывает виды, и портал мог не попасть в выборку
+   ни разу: тест бы позеленел, ничего не проверив. */
+const CASES = Object.keys(PRESETS).filter((n) => !PRESETS[n].record).map((n) => [n, PRESETS[n]])
+  .concat([['всё сразу', { ...PRESETS['пустоты'], mechs: 0, portals: 2, apples: 2,
+    bridges: 2, turns: 3, spiky: 1, sleepy: 2 }]]);
+
 let bad = 0;
-for (const name of Object.keys(PRESETS)) {
-  if (PRESETS[name].record) continue;          // на поле рекорда цели нет, плана тоже
+for (const [name, preset] of CASES) {
   let ok = 0, tried = 0;
   const fails = [];
-  for (let seed = 1; seed <= 600 && ok < WANT; seed++) {
-    const r = craftOnce(name, seed);
+  for (let seed = 1; seed <= 900 && ok < WANT; seed++) {
+    const r = craftOnce(preset, seed);
     if (!r.level) continue;
     tried++;
     const lv = r.level;
     const board = { rocks: new Set(),
       bridges: new Set((lv.bridges || []).map(([x, y]) => M.ckey(x, y))),
-      turns: new Map((lv.turns || []).map(([x, y, a, b]) => [M.ckey(x, y), a + b])) };
+      turns: new Map((lv.turns || []).map(([x, y, a, b]) => [M.ckey(x, y), a + b])),
+      gates: new Map((lv.portals || []).map(([x, y, u, v]) => [M.ckey(x, y), [u, v]])) };
     const snakes = lv.snakes.map((s, i) => ({ id: 's' + i, cells: s.cells.map((c) => c.slice()),
       spiky: !!s.spiky, sleep: !!s.sleep }));
     const sids = lv.moves.map((mv) => 's' + lv.snakes.findIndex((s) => s.id === mv.eater));
