@@ -27,7 +27,7 @@ function occMap(snakes) {
 
 function raycast(snakes, i, W, H, board) {
   const s = snakes[i];
-  let [dx, dy] = facing(s.cells);          // колено гнёт луч, поэтому не const
+  let [dx, dy] = facing(s.cells);          // поворот гнёт луч, поэтому не const
   const occ = occMap(snakes);
   let [x, y] = s.cells[0];
   const gap = [];
@@ -38,9 +38,9 @@ function raycast(snakes, i, W, H, board) {
     if (x < 0 || y < 0 || x >= W || y >= H) return { kind: 'edge', gap };
     if (board.rocks.has(ck(x, y))) return { kind: 'rock' };
     if (board.bridges.has(ck(x, y))) { gap.push([x, y]); continue; }   // луч идёт над мостом
-    // спина колена — СТЕНА, и стена не исчезает оттого, что на плитке
+    // спина поворота — СТЕНА, и стена не исчезает оттого, что на плитке
     // кто-то лежит: проверяем закрытую сторону РАНЬШЕ занятости. Иначе змея,
-    // легшая на плитку, подставляла свой хвост под луч, который упирался колену
+    // легшая на плитку, подставляла свой хвост под луч, который упирался повороту
     // в спину, — и обед проходил сквозь стену.
     const t = board.turns.get(ck(x, y));
     const from = t ? (dx === 1 ? 'w' : dx === -1 ? 'e' : dy === 1 ? 'n' : 's') : null;

@@ -27,7 +27,7 @@ function report(rec, n) {
   console.log(`\n${'═'.repeat(64)}\n#${n}  «${REASONS[rec.reason]}»  ${lv.w}×${lv.h}  ${goal ? 'цель ' + target : 'рекорд, потолок ' + target}`);
   const mech = [];
   if ((lv.bridges || []).length) mech.push(`мостов ${lv.bridges.length}`);
-  if ((lv.turns || []).length) mech.push(`колен ${lv.turns.length}`);
+  if ((lv.turns || []).length) mech.push(`поворотов ${lv.turns.length}`);
   if (lv.snakes.some((s) => s.apple)) mech.push(`яблок ${lv.snakes.filter((s) => s.apple).length}`);
   if ((lv.portals || []).length) mech.push(`порталов ${lv.portals.length}`);
   if (lv.snakes.some((s) => s.spiky)) mech.push(`колючих ${lv.snakes.filter((s) => s.spiky).length}`);
