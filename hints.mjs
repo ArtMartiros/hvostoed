@@ -1,7 +1,7 @@
 // Тест подсказки на коде, вырезанном из самой игры.
 import fs from 'fs';
 const src = fs.readFileSync(process.argv[2] || 'hvostoed.jsx','utf8');
-const from = src.indexOf('const facing = (cells)');
+const from = src.indexOf('const SIDES = { n:');
 const to = src.indexOf('function buildEatMove');
 const logic = src.slice(from, to);
 const grab = (n) => { const i = src.indexOf(`const ${n} = [`); const j = src.indexOf('\n];', i);

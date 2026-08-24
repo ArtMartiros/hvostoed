@@ -715,6 +715,7 @@ const buildPack = (raw, mode) =>
         id: "s" + si,
         color: colors[si],
         spiky: !!s.spiky,
+        sleep: !!s.sleep,
         cells: s.cells,
       })),
     };
@@ -746,8 +747,6 @@ const withIds = (snakes) => snakes.map((s, i) =>
    о валун: у плитки есть спина. Занятость проверяется РАНЬШЕ колена, поэтому змея,
    лёгшая на плитку, её перекрывает — и заодно скрывает, что честно: перекрытое
    колено не работает. */
-const SIDES = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
-const sideName = (v) => (v[0] === 1 ? "e" : v[0] === -1 ? "w" : v[1] === 1 ? "s" : "n");
 const boardOf = (lv) => ({
   rocks: new Set((lv.rocks || []).map(([x, y]) => ckey(x, y))),
   bridges: new Set((lv.bridges || []).map(([x, y]) => ckey(x, y))),
@@ -768,19 +767,27 @@ function acceptCrafted(name, r, ordinal) {
     const got = replayPlan({ w: lv.w, h: lv.h }, withIds(snakes), plan, bd);
     if (got.broken || got.len < 2) return null;
     return { ...base, mode: "record", ceiling: got.len, proof: "beam", mass: m.mass,
+      plan: plan.map((st) => st.sid),
       marks: [Math.round(got.len * 0.5), Math.round(got.len * 0.75), got.len],
       lesson: `${m.snakes} змей · ${клеток(m.mass)} · игра собирает ${got.len} за ${ходов(got.steps)}` };
   }
   const target = lv.len;
-  const plan = planGoal({ w: lv.w, h: lv.h, target }, withIds(snakes), boardOf(lv));
-  if (!plan) return null;
-  if (plan.length < lv.moves.length) return null;   // игра нашла путь короче задуманного
+  /* Уровень строится ИЗ плана — значит план у нас уже есть, и правильная приёмка
+     не «пусть игра поищет решение заново», а «пусть игра пройдёт задуманное».
+     Это и точнее (перебор упирается в бюджет и на больших досках сдаётся), и
+     на порядок дешевле, и заодно ловит расхождение механики игры с генератором.
+     Путь короче задуманного отсекается раньше, в craftOnce (метрика shortcut). */
+  const sids = lv.moves.map((mv) => "s" + lv.snakes.findIndex((s) => s.id === mv.eater));
+  if (sids.some((s) => s === "s-1")) return null;
+  const got = walkSids({ w: lv.w, h: lv.h }, withIds(snakes), sids, boardOf(lv));
+  if (got.bad || got.len < target) return null;
+  const plan = got.steps;
   const marks = [];
   if (snakes.some((s) => s.spiky)) marks.push("колючую не съесть");
   if (snakes.some((s) => s.sleep)) marks.push("спящая не ходит");
   if ((base.bridges || []).length) marks.push("над мостом луч проходит");
   if ((base.turns || []).length) marks.push("колено загибает луч");
-  return { ...base, mode: "goal", target,
+  return { ...base, mode: "goal", target, plan: sids,
     lesson: `Цель ${target} за ${ходов(plan.length)} · решений ${m.sols} · безопасных тапов ${Math.round(100 * m.safety)}%`
       + (marks.length ? " · " + marks.join(", ") : "") };
 }
@@ -788,7 +795,7 @@ function acceptCrafted(name, r, ordinal) {
 const craftedToLevel = (c, i) => {
   const raw = { ...c, rocks: [], bridges: c.bridges || [], turns: c.turns || [] };
   const colors = paintPack(raw);
-  return { ...raw, id: i, rocks: [], bridges: c.bridges || [], turns: c.turns || [],
+  return { ...raw, id: i, rocks: [], bridges: c.bridges || [], turns: c.turns || [], plan: c.plan || null,
     snakes: c.snakes.map((sn, si) =>
       ({ id: "s" + si, color: colors[si], spiky: !!sn.spiky, sleep: !!sn.sleep, cells: sn.cells })) };
 };
@@ -796,6 +803,7 @@ const craftedToLevel = (c, i) => {
 const craftedToText = (c) => `  {
     name: ${JSON.stringify(c.name)}, lesson: ${JSON.stringify(c.lesson)},
     w: ${c.w}, h: ${c.h}, ${c.bridges && c.bridges.length ? `bridges: [${c.bridges.map(([x, y]) => `[${x}, ${y}]`).join(", ")}], ` : ""}${c.turns && c.turns.length ? `turns: [${c.turns.map(([x, y, a, b]) => `[${x}, ${y}, "${a}", "${b}"]`).join(", ")}], ` : ""}${c.mode === "record" ? `ceiling: ${c.ceiling}, proof: "beam", mass: ${c.mass}, marks: ${JSON.stringify(c.marks)}` : `target: ${c.target}`},
+    plan: ${JSON.stringify(c.plan || [])},
     snakes: [
 ${c.snakes.map((sn) => "      { " + (sn.spiky ? "spiky: true, " : "") + (sn.sleep ? "sleep: true, " : "") +
     "cells: [" + sn.cells.map(([x, y]) => `[${x}, ${y}]`).join(", ") + "] },").join("\n")}
@@ -809,6 +817,8 @@ const PACKS = [
 ];
 
 /* ---------- логика (идентична солверу) ---------- */
+const SIDES = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
+const sideName = (v) => (v[0] === 1 ? "e" : v[0] === -1 ? "w" : v[1] === 1 ? "s" : "n");
 const facing = (cells) => [cells[0][0] - cells[1][0], cells[0][1] - cells[1][1]];
 const ckey = (x, y) => x + "," + y;
 
@@ -896,7 +906,10 @@ function legalMoves(snakes, W, H, board) {
 
 // Кратчайшая победа. Бюджет узлов общий на все глубины: если позиция безнадёжна,
 // перебор не имеет права подвесить вкладку — вернём null и отдадим ход эвристике.
-function planGoal(level, snakes, board) {
+/* out.exhausted — бюджет кончился, а не решения нет. Разница принципиальная:
+   на «не нашёл» игроку нельзя говорить «нельзя», иначе интерфейс врёт и уровень
+   выглядит непроходимым, будучи проходимым. */
+function planGoal(level, snakes, board, out) {
   const budget = { left: 150000 };
   let seq = null;
   const dfs = (sn, d, cap, path, seen) => {
@@ -915,7 +928,26 @@ function planGoal(level, snakes, board) {
   for (let cap = 1; cap <= snakes.length && budget.left > 0; cap++) {
     if (dfs(snakes, 0, cap, [], new Set())) return seq;
   }
+  if (out && budget.left <= 0) out.exhausted = true;
   return null;
+}
+
+/* Прогон списка ходов (по одной змее на ход) механикой самой игры.
+   Это и приёмка сгенерированного уровня, и источник карты «состояние → ход»
+   для подсказки: задуманный план точен по построению и искать его заново
+   перебором незачем. */
+function walkSids(level, snakes, sids, board) {
+  const steps = [];
+  let sn = snakes;
+  for (const sid of sids) {
+    if (!sn.some((s) => s.id === sid)) return { bad: "змея " + sid + " уже съедена", steps };
+    steps.push({ k: stateKey(sn), sid });
+    const ray = raycast(sn, sid, level.w, level.h, board);
+    if (ray.kind === "tail") sn = applyEat(sn, sid, ray);
+    else if (ray.kind === "edge") sn = sn.filter((q) => q.id !== sid);
+    else return { bad: "ход ведёт в аварию: " + ray.kind, steps };
+  }
+  return { steps, len: maxLen(sn), left: sn.length };
 }
 
 // Самая длинная змея. Ширина 160: на всех трёх полях даёт тот же результат, что и 320,
@@ -1303,6 +1335,18 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
     }
     const ml = maxLen(mv.finalSnakes);
     if (ml > runBest) { setRunBest(ml); if (isRec && hintsRef.current === 0) onRecord(ml); }
+    /* Смерть по массе. Обед массу сохраняет, теряется она только на вылете, а цель
+       по построению не больше стартовой массы. Значит «клеток на поле меньше цели» —
+       ТОЧНЫЙ признак проигрыша за одно сложение, без перебора; он ловит главную
+       необратимую ошибку — лишний выпуск. Молчать тут нельзя: правило порога
+       (партия идёт, пока можно расти) само по себе позволяет расти вечно, ни разу
+       не дорастая до цели, — и игрок ходит по мёртвому уровню, не зная об этом. */
+    if (!isRec && mv.finalSnakes.reduce((a, s) => a + s.cells.length, 0) < level.target) {
+      clearTimeout(crashTimerRef.current);
+      setLostReason("Улетело слишком много: на поле осталось меньше клеток, чем нужно на цель.");
+      setPhase("lost");
+      return;
+    }
     // Цель — порог, а не финиш: пока змея может расти, партия продолжается.
     const anyEat = mv.finalSnakes.some((s) => !s.sleep && raycast(mv.finalSnakes, s.id, level.w, level.h, board).kind === "tail");
     if (!anyEat && !canGrow(level, mv.finalSnakes, board, ml)) {
@@ -1466,18 +1510,38 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
     }
   }
 
+  /* Задуманный план, разложенный по состояниям. Уровень построен ИЗ него, так что
+     пока игрок с него не сошёл, подсказка точна по построению и бесплатна.
+     Перебор — только для тех, кто отклонился. */
+  const madeRef = useRef(null);
+  function made() {
+    if (madeRef.current) return madeRef.current;
+    const m = new Map();
+    if (level.plan && level.plan.length) {
+      const got = walkSids(level, clone(level.snakes), level.plan, board);
+      if (!got.bad) for (const st of got.steps) m.set(st.k, st.sid);
+    }
+    madeRef.current = m;
+    return m;
+  }
+
   function hint() {
     if (phase !== "idle") return;
     const k = stateKey(snakes);
-    let sid = planRef.current.get(k);
+    let sid = made().get(k);
+    if (sid == null) sid = planRef.current.get(k);
     if (sid == null) {
-      const plan = (isRec || best >= level.target)
-        ? planLongest(level, snakes, board)
-        : (planGoal(level, snakes, board) || planLongest(level, snakes, board));
+      const goal = !isRec && best < level.target;
+      const out = {};
+      const plan = goal
+        ? (planGoal(level, snakes, board, out) || planLongest(level, snakes, board))
+        : planLongest(level, snakes, board);
       if (!plan || !plan.length) {
-        setToast(isRec || best >= level.target
+        setToast(!goal
           ? "Больше не вырасти — партию можно заканчивать."
-          : "Отсюда цели уже не достичь. Отмени ход или начни заново.");
+          : out.exhausted
+            ? "Ты ушёл от задуманного пути, и отсюда решения я не вижу. Отмени ход."
+            : "Отсюда цели уже не достичь. Отмени ход или начни заново.");
         return;
       }
       planRef.current = new Map(plan.map((st) => [st.k, st.sid]));
@@ -1838,8 +1902,35 @@ function CraftModal({ base, cfg, onSet, onClose, onGo, onReset, busy, fail }) {
   );
 }
 
+/* Правила показываются один раз при первом запуске и потом только по «?».
+   Читают их ровно ноль раз после первого — значит и места на главной занимать
+   не должны. */
+function Rules({ pack, onClose }) {
+  return (
+    <div className="hv-overlay hv-modal" onClick={onClose}>
+      <div className="hv-card hv-cfg" onClick={(e) => e.stopPropagation()}>
+        <div className="hv-cfgtop">
+          <span className="hv-cfgttl">Как играть</span>
+          <button className="hv-mini" onClick={onClose} aria-label="Закрыть"><X size={16} /></button>
+        </div>
+        <ul className="hv-rules">
+          <li><b>Тапни змею.</b> Если она смотрит на чужой хвост — проглотит его целиком.</li>
+          <li><b>Смотри, куда она смотрит.</b> Врежется в тело{pack.id === "void" ? "" : ", валун"} или голову — авария.</li>
+          <li><b>Некого есть?</b> Выпусти змею с поля и расчисти дорогу. Но её длина пропадёт.</li>
+          {pack.id === "record" ? (
+            <li><b>Цели нет.</b> Расти, пока есть кого есть. В зачёт идёт самая длинная змея за партию.</li>
+          ) : (
+            <li><b>Цель:</b> хотя бы одна змея нужной длины. Неважно, какая.</li>
+          )}
+        </ul>
+        <button className="hv-btn" onClick={onClose}>Понятно</button>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- меню ---------- */
-function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft, onDrop, busy, note }) {
+function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft, onDrop, busy, note, onRules }) {
   const pack = packs[packIdx];
   return (
     <div className="hv-screen hv-menu">
@@ -1850,17 +1941,7 @@ function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft
         <circle cx="196" cy="14" r="8" fill="#58A942" />
         <circle cx="199" cy="11" r="2" fill="#152118" />
       </svg>
-      <div className="hv-tag">Съешь соседа за хвост — и вырасти самой длинной</div>
-      <ul className="hv-rules">
-        <li><b>Тапни змею.</b> Если она смотрит на чужой хвост — проглотит его целиком.</li>
-        <li><b>Смотри, куда она смотрит.</b> Врежется в тело{pack.id === "void" ? "" : ", валун"} или голову — авария.</li>
-        <li><b>Некого есть?</b> Выпусти змею с поля и расчисти дорогу. Но её длина пропадёт.</li>
-        {pack.id === "record" ? (
-          <li><b>Цели нет.</b> Расти, пока есть кого есть. В зачёт идёт самая длинная змея за партию.</li>
-        ) : (
-          <li><b>Цель:</b> хотя бы одна змея нужной длины. Неважно, какая.</li>
-        )}
-      </ul>
+      <button className="hv-help" onClick={() => onRules(true)} aria-label="Правила">?</button>
       <div className="hv-packs">
         {packs.map((p, i) => (
           <button key={p.id} className={"hv-pack" + (i === packIdx ? " hv-pack-on" : "")} onClick={() => onPack(i)}>
@@ -1950,6 +2031,15 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("hv-craftcfg") || "{}"); } catch (e) { return {}; }
   });
   const abortRef = useRef(false);
+  // Правила на главной больше не висят: тому, кто их прочёл, они не нужны ни разу.
+  // Но первому встречному нужны, поэтому один раз показываем сами.
+  const [rules, setRules] = useState(() => {
+    try { return !localStorage.getItem("hv-seen"); } catch (e) { return true; }
+  });
+  const closeRules = () => {
+    setRules(false);
+    try { localStorage.setItem("hv-seen", "1"); } catch (e) {}
+  };
 
   const cfgOf = (name) => ({ ...PRESETS[name], ...(craftCfgs[name] || {}) });
   const setCfg = (name, upd) => {
@@ -2063,6 +2153,7 @@ export default function App() {
           onGo={{ run: () => craft(craftOpen, cfgOf(craftOpen)), cancel: () => { abortRef.current = true; } }}
         />
       ) : null}
+      {rules ? <Rules pack={pack} onClose={closeRules} /> : null}
       {screen === "menu" ? (
         <Menu
           packs={packs}
@@ -2076,6 +2167,7 @@ export default function App() {
           onDrop={onDrop}
           onPack={(i) => { setPackIdx(i); setIdx(0); setNote(null); }}
           onPlay={(i) => { setIdx(i); setScreen("game"); }}
+          onRules={() => setRules(true)}
         />
       ) : (
         <Game
@@ -2237,14 +2329,17 @@ body{overflow-x:hidden;-webkit-text-size-adjust:100%;}
 .hv-wonsub{font-size:13px;color:#9FB29B;margin-bottom:16px;}
 .hv-btnrow{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
 
-.hv-menu{padding-top:34px;align-items:center;}
+.hv-menu{padding-top:34px;align-items:center;position:relative;}
 .hv-logo{font-family:Unbounded,sans-serif;font-weight:800;font-size:34px;letter-spacing:1px;
   color:#F3F0E4;text-shadow:0 3px 0 #0D150F;}
 .hv-squiggle{width:210px;margin:6px 0 12px;}
 .hv-squigpath{stroke-dasharray:300;stroke-dashoffset:300;animation:hvdraw 1.1s .15s ease forwards;}
 @keyframes hvdraw{to{stroke-dashoffset:0;}}
-.hv-tag{font-size:14px;color:#9FB29B;margin-bottom:16px;text-align:center;}
-.hv-rules{list-style:none;margin:0 0 18px;padding:0;display:flex;flex-direction:column;gap:8px;width:100%;}
+.hv-help{position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:50%;
+  background:#1B2A1F;border:1px solid #35503C;color:#8AA089;font:600 15px Rubik,sans-serif;
+  cursor:pointer;padding:0;}
+.hv-rules{list-style:none;margin:2px 0 16px;padding:0;display:flex;flex-direction:column;gap:8px;width:100%;
+  text-align:left;}
 .hv-rules li{font-size:13.5px;line-height:1.45;color:#C9D6C2;background:#1B2A1F;border:1px solid #2C3E30;
   border-radius:14px;padding:10px 13px;}
 .hv-rules b{color:#F3F0E4;}
