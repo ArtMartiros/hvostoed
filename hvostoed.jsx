@@ -710,6 +710,7 @@ const buildPack = (raw, mode) =>
       mode: mode || "goal",
       rocks: lv.rocks || [],
       bridges: lv.bridges || [],
+      turns: lv.turns || [],
       snakes: lv.snakes.map((s, si) => ({
         id: "s" + si,
         color: colors[si],
@@ -737,18 +738,28 @@ const уровней = (n) => n + " " + plural(n, "уровень", "уровн�
 
 const withIds = (snakes) => snakes.map((s, i) =>
   ({ id: "s" + i, spiky: !!s.spiky, sleep: !!s.sleep, cells: s.cells.map((c) => c.slice()) }));
-// доска = валуны и мосты; собирается из уровня в одном месте, чтобы игра,
-// планировщик и мастерская читали одно и то же
+/* Доска = валуны, мосты и колена. Собирается из уровня в одном месте, чтобы игра,
+   планировщик, солвер и мастерская читали одно и то же.
+
+   Колено — плитка пола, соединяющая две стороны клетки из четырёх. Луч, вошедший
+   с открытой стороны, выходит в другую открытую; вошедший с закрытой — авария, как
+   о валун: у плитки есть спина. Занятость проверяется РАНЬШЕ колена, поэтому змея,
+   лёгшая на плитку, её перекрывает — и заодно скрывает, что честно: перекрытое
+   колено не работает. */
+const SIDES = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
+const sideName = (v) => (v[0] === 1 ? "e" : v[0] === -1 ? "w" : v[1] === 1 ? "s" : "n");
 const boardOf = (lv) => ({
   rocks: new Set((lv.rocks || []).map(([x, y]) => ckey(x, y))),
   bridges: new Set((lv.bridges || []).map(([x, y]) => ckey(x, y))),
+  turns: new Map((lv.turns || []).map(([x, y, a, b]) => [ckey(x, y), a + b])),
 });
 
 function acceptCrafted(name, r, ordinal) {
   const lv = r.level, m = r.metrics;
   const snakes = lv.snakes.map((s) =>
     ({ cells: s.cells.map((c) => c.slice()), ...(s.spiky ? { spiky: true } : {}), ...(s.sleep ? { sleep: true } : {}) }));
-  const base = { w: lv.w, h: lv.h, snakes, bridges: lv.bridges || [], preset: name, seed: r.seed,
+  const base = { w: lv.w, h: lv.h, snakes, bridges: lv.bridges || [], turns: lv.turns || [],
+                 preset: name, seed: r.seed,
                  name: name.charAt(0).toUpperCase() + name.slice(1) + " " + ordinal };
   if (r.record) {
     const bd = boardOf(lv);
@@ -768,22 +779,23 @@ function acceptCrafted(name, r, ordinal) {
   if (snakes.some((s) => s.spiky)) marks.push("колючую не съесть");
   if (snakes.some((s) => s.sleep)) marks.push("спящая не ходит");
   if ((base.bridges || []).length) marks.push("над мостом луч проходит");
+  if ((base.turns || []).length) marks.push("колено загибает луч");
   return { ...base, mode: "goal", target,
     lesson: `Цель ${target} за ${ходов(plan.length)} · решений ${m.sols} · безопасных тапов ${Math.round(100 * m.safety)}%`
       + (marks.length ? " · " + marks.join(", ") : "") };
 }
 
 const craftedToLevel = (c, i) => {
-  const raw = { ...c, rocks: [], bridges: c.bridges || [] };
+  const raw = { ...c, rocks: [], bridges: c.bridges || [], turns: c.turns || [] };
   const colors = paintPack(raw);
-  return { ...raw, id: i, rocks: [], bridges: c.bridges || [],
+  return { ...raw, id: i, rocks: [], bridges: c.bridges || [], turns: c.turns || [],
     snakes: c.snakes.map((sn, si) =>
       ({ id: "s" + si, color: colors[si], spiky: !!sn.spiky, sleep: !!sn.sleep, cells: sn.cells })) };
 };
 
 const craftedToText = (c) => `  {
     name: ${JSON.stringify(c.name)}, lesson: ${JSON.stringify(c.lesson)},
-    w: ${c.w}, h: ${c.h}, ${c.bridges && c.bridges.length ? `bridges: [${c.bridges.map(([x, y]) => `[${x}, ${y}]`).join(", ")}], ` : ""}${c.mode === "record" ? `ceiling: ${c.ceiling}, proof: "beam", mass: ${c.mass}, marks: ${JSON.stringify(c.marks)}` : `target: ${c.target}`},
+    w: ${c.w}, h: ${c.h}, ${c.bridges && c.bridges.length ? `bridges: [${c.bridges.map(([x, y]) => `[${x}, ${y}]`).join(", ")}], ` : ""}${c.turns && c.turns.length ? `turns: [${c.turns.map(([x, y, a, b]) => `[${x}, ${y}, "${a}", "${b}"]`).join(", ")}], ` : ""}${c.mode === "record" ? `ceiling: ${c.ceiling}, proof: "beam", mass: ${c.mass}, marks: ${JSON.stringify(c.marks)}` : `target: ${c.target}`},
     snakes: [
 ${c.snakes.map((sn) => "      { " + (sn.spiky ? "spiky: true, " : "") + (sn.sleep ? "sleep: true, " : "") +
     "cells: [" + sn.cells.map(([x, y]) => `[${x}, ${y}]`).join(", ") + "] },").join("\n")}
@@ -815,7 +827,7 @@ function occMap(snakes) {
    на мосту, с этого направления не съесть — луч над ней пролетит. */
 function raycast(snakes, sid, W, H, board) {
   const s = snakes.find((q) => q.id === sid);
-  const [dx, dy] = facing(s.cells);
+  let [dx, dy] = facing(s.cells);
   const occ = occMap(snakes);
   let [x, y] = s.cells[0];
   const gap = [];
@@ -833,6 +845,12 @@ function raycast(snakes, sid, W, H, board) {
           : { kind: "tail", target: hit.sid, gap, hitCell: [x, y], dir: [dx, dy] };
       if (hit.ci === 0) return { kind: "head", target: hit.sid, gap, hitCell: [x, y], dir: [dx, dy] };
       return { kind: "body", target: hit.sid, gap, hitCell: [x, y], dir: [dx, dy] };
+    }
+    const t = board.turns.get(ckey(x, y));
+    if (t) {
+      const from = sideName([-dx, -dy]);
+      if (t[0] !== from && t[1] !== from) return { kind: "turnBack", gap, hitCell: [x, y], dir: [dx, dy] };
+      [dx, dy] = SIDES[t[0] === from ? t[1] : t[0]];
     }
     gap.push([x, y]);
   }
@@ -990,10 +1008,9 @@ function buildLaunchMove(snakes, sid, ray) {
   const s = snakes.find((q) => q.id === sid);
   const n0 = s.cells.length;
   const [dx, dy] = ray.dir;
-  const pathCells = [];
-  let [x, y] = s.cells[0];
-  const steps = ray.gap.length + n0 + 1;
-  for (let i = 0; i < steps; i++) { x += dx; y += dy; pathCells.push([x, y]); }
+  const pathCells = ray.gap.map((c) => c.slice());     // луч мог гнуться в коленах
+  let [x, y] = pathCells.length ? pathCells[pathCells.length - 1] : s.cells[0];
+  for (let i = 0; i < n0 + 1; i++) { x += dx; y += dy; pathCells.push([x, y]); }
   return {
     kind: "launch",
     moverId: sid,
@@ -1057,6 +1074,29 @@ function angleAt(P, s) {
    всегда лежит змея, поэтому настил под ней не виден вовсе. Настил идёт под
    змеями (тёплая клетка пола), а угловые скобы — ПОВЕРХ них, чтобы клетка
    читалась как проходимая, что бы на ней ни стояло. */
+/* Колено рисуется только на полу: перекрытое змеёй оно и не работает, так что
+   прятаться под ней — честное поведение, а не недосмотр. Открытые стороны —
+   жёлоб, закрытые — стенка. */
+function Turn({ x, y, a, b }) {
+  const cx = x * CS + CS / 2, cy = y * CS + CS / 2, R = 46;
+  const mid = (sd) => [cx + SIDES[sd][0] * R, cy + SIDES[sd][1] * R];
+  const [ax, ay] = mid(a), [bx, by] = mid(b);
+  const d = "M" + ax + " " + ay + " Q" + cx + " " + cy + " " + bx + " " + by;
+  const shut = ["n", "e", "s", "w"].filter((q) => q !== a && q !== b).map((q) => {
+    const [mx, my] = mid(q), t = [SIDES[q][1], -SIDES[q][0]];
+    return <line key={q} x1={mx - t[0] * 40} y1={my - t[1] * 40} x2={mx + t[0] * 40} y2={my + t[1] * 40}
+      stroke="#7E8CA0" strokeWidth="12" strokeLinecap="round" />;
+  });
+  return (
+    <g>
+      <rect x={cx - R} y={cy - R} width={R * 2} height={R * 2} rx="18" fill="#DCE3EC" />
+      <path d={d} fill="none" stroke="#9FB0C6" strokeWidth="42" strokeLinecap="round" />
+      <path d={d} fill="none" stroke="#EDF2F8" strokeWidth="26" strokeLinecap="round" />
+      {shut}
+    </g>
+  );
+}
+
 function BridgeFloor({ x, y }) {
   const cx = x * CS + CS / 2, cy = y * CS + CS / 2;
   return (
@@ -1179,18 +1219,17 @@ function SnakeView({ snake, shaking, onTap, regRef }) {
 
 function RayView({ ray, from, color }) {
   const [hx, hy] = toPx(from);
-  let x2, y2;
-  if (ray.hitCell) {
-    x2 = ray.hitCell[0] * CS + CS / 2 - ray.dir[0] * 34;
-    y2 = ray.hitCell[1] * CS + CS / 2 - ray.dir[1] * 34;
-  } else {
-    x2 = hx + ray.dir[0] * (ray.gap.length * CS + CS * 0.62);
-    y2 = hy + ray.dir[1] * (ray.gap.length * CS + CS * 0.62);
-  }
+  // луч может гнуться в коленах, поэтому рисуем ломаную по его собственным клеткам
+  const pts = [[hx, hy], ...ray.gap.map(([x, y]) => [x * CS + CS / 2, y * CS + CS / 2])];
+  const tail = pts[pts.length - 1];
+  const x2 = ray.hitCell ? ray.hitCell[0] * CS + CS / 2 - ray.dir[0] * 34 : tail[0] + ray.dir[0] * CS * 0.62;
+  const y2 = ray.hitCell ? ray.hitCell[1] * CS + CS / 2 - ray.dir[1] * 34 : tail[1] + ray.dir[1] * CS * 0.62;
+  pts.push([x2, y2]);
+  const dPath = "M" + pts.map((q) => q[0].toFixed(1) + " " + q[1].toFixed(1)).join(" L");
   return (
     <g style={{ pointerEvents: "none" }}>
-      <line x1={hx} y1={hy} x2={x2} y2={y2} stroke={color} strokeWidth="10"
-        strokeLinecap="round" strokeDasharray="4 26" className="hv-dash" />
+      <path d={dPath} fill="none" stroke={color} strokeWidth="10"
+        strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4 26" className="hv-dash" />
       {ray.kind === "edge" ? (
         <path d={"M" + x2 + " " + y2 + " m" + (-ray.dir[0] * 16) + " " + (-ray.dir[1] * 16) +
                  " l" + (ray.dir[0] * 26 - ray.dir[1] * 14) + " " + (ray.dir[1] * 26 - ray.dir[0] * 14) +
@@ -1414,6 +1453,8 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
       crash(Nom + " змея смотрит на собственный хвост — уроборос запрещён.", sid, ray, s.cells[0]);
     } else if (ray.kind === "rock") {
       crash(Nom + " змея врезалась в валун.", sid, ray, s.cells[0]);
+    } else if (ray.kind === "turnBack") {
+      crash(Nom + " змея ткнулась в стенку колена — с этой стороны глухо.", sid, ray, s.cells[0]);
     } else if (ray.kind === "spikyTail") {
       crash(Nom + " змея укололась о шипы — колючий хвост не съесть.", sid, ray, s.cells[0]);
     } else if (ray.kind === "head") {
@@ -1536,6 +1577,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord }) {
           </defs>
           <rect x="0" y="0" width={W} height={H} rx="20" fill="#ECF2DE" />
           {cells}
+          {(level.turns || []).map(([x, y, a, b]) => <Turn key={"t" + x + "-" + y} x={x} y={y} a={a} b={b} />)}
           {(level.bridges || []).map(([x, y]) => <BridgeFloor key={"bf" + x + "-" + y} x={x} y={y} />)}
           {level.rocks.map(([x, y]) => <Rock key={"r" + x + "-" + y} x={x} y={y} />)}
           <g clipPath="url(#hv-clip)">
@@ -1669,6 +1711,7 @@ const CRAFT_KNOBS = [
   { k: "spiky",  nom: "из них колючих",  min: 0, max: (c) => c.decoys, sub: true },
   { k: "sleepy", nom: "из них спящих",   min: 0, max: (c) => Math.max(0, c.decoys - (c.spiky || 0)), sub: true },
   { k: "bridges", nom: "Мостов",         min: 0, max: 4 },
+  { k: "turns",  nom: "Колен",           min: 0, max: 8 },
 ];
 /* Разбор отказов человеческим языком: приёмка возвращает имя метрики, а игроку
    нужно знать, какую ручку отпустить. */
@@ -1740,7 +1783,8 @@ function CraftModal({ base, cfg, onSet, onClose, onGo, onReset, busy, fail }) {
 
         <div className="hv-knob col">
           <span className="hv-knobnom">
-            Пустот всего <i className="hv-knobhint">надёжно до {ceil} · след решения {клеток(cfg.len + cfg.voids)}</i>
+            Пустот всего <i className="hv-knobhint">надёжно до {ceil} · след решения {клеток(cfg.len + cfg.voids)}
+              {cfg.turns ? " · колена поднимают потолок" : ""}</i>
           </span>
           <span className="hv-slide">
             <input type="range" min="0" max={Math.max(4, Math.round(ceil * 1.3))} value={Math.min(cfg.voids, Math.max(4, Math.round(ceil * 1.3)))}
@@ -1913,7 +1957,7 @@ export default function App() {
       const cur = { ...PRESETS[name], ...(prev[name] || {}) };
       const got = typeof upd === "function" ? upd(cur) : upd;
       const keep = {};
-      for (const k of ["w", "h", "len", "moves", "decoys", "bridges", "spiky", "sleepy", "voids", "peak", "breather"]) keep[k] = got[k];
+      for (const k of ["w", "h", "len", "moves", "decoys", "bridges", "turns", "spiky", "sleepy", "voids", "peak", "breather"]) keep[k] = got[k];
       const next = { ...prev, [name]: keep };
       try { localStorage.setItem("hv-craftcfg", JSON.stringify(next)); } catch (e) {}
       return next;

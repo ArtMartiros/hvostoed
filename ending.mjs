@@ -33,7 +33,8 @@ for (const packName of ['RAW_LEVELS', 'RAW_LEVELS_VOID', 'RAW_FIELDS']) {
   console.log(`\n### ${packName}`);
   levels.forEach((lv, li) => {
     const board = { rocks: new Set((lv.rocks || []).map(([x, y]) => M.ckey(x, y))),
-                      bridges: new Set((lv.bridges || []).map(([x, y]) => M.ckey(x, y))) };
+                      bridges: new Set((lv.bridges || []).map(([x, y]) => M.ckey(x, y))),
+                      turns: new Map((lv.turns || []).map(([x, y, a, b]) => [M.ckey(x, y), a + b])) };
     // жадно доигрываем партию до конца, на каждом шаге сверяя canGrow с перебором
     const seen = new Set();
     let sn = mk(lv), steps = 0, endedAt = null;

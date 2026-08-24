@@ -41,6 +41,21 @@ const inside = (w, h, c) => c[0] >= 0 && c[1] >= 0 && c[0] < w && c[1] < h;
 
 /* ---------- механика (та же, что в игре) ---------- */
 const ck = (c) => c[0] + ',' + c[1];
+
+/* Колено: плитка пола, соединяющая две стороны клетки из четырёх. Луч, вошедший
+   с открытой стороны, выходит в другую открытую; вошедший с закрытой — авария,
+   как о валун. Значит у плитки есть спина, и она заодно работает препятствием.
+   Занятость проверяется РАНЬШЕ колена: змея, лёгшая на плитку, её перекрывает. */
+export const SIDES = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
+export const sideName = (v) => (v[0] === 1 ? 'e' : v[0] === -1 ? 'w' : v[1] === 1 ? 's' : 'n');
+export const tileKey = (a, b) => [a, b].sort().join('');
+
+export function boardOf(lv) {
+  return {
+    bridges: new Set((lv.bridges || []).map(ck)),
+    turns: new Map((lv.turns || []).map(([x, y, a, b]) => [ck([x, y]), tileKey(a, b)])),
+  };
+}
 export const facing = (cells) => sub(cells[0], cells[1]);
 export const maxLen = (st) => st.reduce((m, s) => Math.max(m, s.cells.length), 0);
 export const totalMass = (st) => st.reduce((m, s) => m + s.cells.length, 0);
@@ -51,29 +66,39 @@ export function occSet(state, skip) {
   return o;
 }
 
-export function raycast(state, i, w, h, bridges) {
+export function raycast(state, i, w, h, board) {
+  const bridges = board && board.bridges, turns = board && board.turns;
   const occ = new Map();
   state.forEach((s, si) => s.cells.forEach((c, ci) => occ.set(ck(c), { si, ci, len: s.cells.length })));
-  const s = state[i], d = facing(s.cells);
-  let c = add(s.cells[0], d), gap = 0;
+  const s = state[i];
+  let d = facing(s.cells);
+  let c = add(s.cells[0], d);
+  const path = [];
   for (;;) {
-    if (!inside(w, h, c)) return { kind: 'edge', gap };
-    if (bridges && bridges.has(ck(c))) { gap++; c = add(c, d); continue; }   // луч идёт над мостом
+    if (!inside(w, h, c)) return { kind: 'edge', gap: path.length, path, dir: d };
+    if (bridges && bridges.has(ck(c))) { path.push(c); c = add(c, d); continue; }   // луч идёт над мостом
     const hit = occ.get(ck(c));
     if (hit) {
-      if (hit.si === i) return { kind: 'self', gap };
+      if (hit.si === i) return { kind: 'self', gap: path.length, path, dir: d };
       if (hit.ci === hit.len - 1)
-        return state[hit.si].spiky ? { kind: 'spikyTail', gap } : { kind: 'tail', prey: hit.si, gap };
-      return { kind: 'block', gap };
+        return state[hit.si].spiky
+          ? { kind: 'spikyTail', gap: path.length, path, dir: d }
+          : { kind: 'tail', prey: hit.si, gap: path.length, path, dir: d };
+      return { kind: 'block', gap: path.length, path, dir: d };
     }
-    gap++; c = add(c, d);
+    const t = turns && turns.get(ck(c));
+    if (t) {
+      const from = sideName([-d[0], -d[1]]);
+      if (t[0] !== from && t[1] !== from) return { kind: 'turnBack', gap: path.length, path, dir: d };
+      d = SIDES[t[0] === from ? t[1] : t[0]];
+    }
+    path.push(c); c = add(c, d);
   }
 }
 
 export function applyEat(state, i, ray) {
-  const eater = state[i], prey = state[ray.prey], d = facing(eater.cells);
-  const path = [];
-  for (let t = 1; t <= ray.gap; t++) path.push(add(eater.cells[0], d, t));
+  const eater = state[i], prey = state[ray.prey];
+  const path = ray.path.map((c) => c.slice());     // луч может гнуться — идём по его клеткам, а не по прямой
   for (let j = prey.cells.length - 1; j >= 0; j--) path.push(prey.cells[j]);
   const food = new Set(prey.cells.map(ck));
   const cells = eater.cells.map((c) => c.slice());
@@ -83,13 +108,11 @@ export function applyEat(state, i, ray) {
   return out;
 }
 
-export const bridgeSet = (lv) => new Set((lv.bridges || []).map(ck));
-
-export function movesOf(state, w, h, bridges) {
+export function movesOf(state, w, h, board) {
   const out = [];
   for (let i = 0; i < state.length; i++) {
     if (state[i].sleep) continue;          // спящая не ходит, но её едят
-    const r = raycast(state, i, w, h, bridges);
+    const r = raycast(state, i, w, h, board);
     if (r.kind === 'tail') out.push({ i, eat: true, prey: r.prey, gap: r.gap, ray: r });
     else if (r.kind === 'edge') out.push({ i, eat: false, gap: r.gap, ray: r });
   }
@@ -124,31 +147,61 @@ export function walk(rnd, w, h, len, blocked, start, firstDir, straightBias) {
   return null;
 }
 
-/* ---------- перебор способов отменить обед ---------- */
+/* ---------- перебор способов отменить обед ----------
+   Раньше весь участок разреза обязан был лежать на прямой: луч летит прямо.
+   С коленями прямизна нужна только НА ВХОДЕ — прицел едока смотрит в первую
+   клетку зазора, — а каждый изгиб внутри превращается в плитку пола. Это и
+   снимает структурный потолок бюджета пустот: он брался ровно из нужды в
+   длинных прямых участках.
+
+   Плата: плитка остаётся на полу навсегда и гнёт ВСЕ лучи через эту клетку.
+   Поэтому вместе с вариантом возвращается список нужных плиток и список клеток,
+   которые вариант проходит НАСКВОЗЬ, — и то и другое проверяется на совместимость
+   со всеми уже принятыми ходами. */
 function splitOptions(M, maxGap) {
   const cells = M.cells, n = cells.length, out = [];
-  const straight = (a, b, c) => { const d1 = sub(b, a), d2 = sub(c, b); return d1[0] === d2[0] && d1[1] === d2[1]; };
   for (let b = 2; b <= n - 2; b++) {
     for (let k = 0; k <= maxGap && b + k <= n - 1; k++) {
-      // линия от хвоста жертвы M[b-1] до головы едока M[b+k] должна быть прямой
-      let ok = true;
-      for (let t = b; t <= b + k - 1; t++) if (!straight(cells[t - 1], cells[t], cells[t + 1])) { ok = false; break; }
-      if (!ok) continue;
       const aBodyLen = n - b - k;
-      const d = sub(cells[b + k - 1] || cells[b - 1], cells[b + k]);   // направление взгляда едока
-      const dir = k === 0 ? sub(cells[b - 1], cells[b]) : sub(cells[b + k - 1], cells[b + k]);
+      const first = sub(cells[b + k - 1] || cells[b - 1], cells[b + k]);
+      const tiles = [], thru = [];
+      for (let t = b + k - 1; t >= b; t--) {
+        const dIn = sub(cells[t], cells[t + 1]);
+        const dOut = sub(cells[t - 1], cells[t]);
+        if (eq(dIn, dOut)) { thru.push(cells[t]); continue; }
+        tiles.push({ cell: cells[t], key: tileKey(sideName([-dIn[0], -dIn[1]]), sideName(dOut)) });
+      }
       if (aBodyLen >= 2) {
-        // A[1] уже есть в M — обязан лежать на той же прямой
-        if (!eq(sub(cells[b + k], cells[b + k + 1]), dir)) continue;
-        out.push({ b, k, dir, needFirstExt: null });
+        if (!eq(sub(cells[b + k], cells[b + k + 1]), first)) continue;
+        out.push({ b, k, dir: first, needFirstExt: null, tiles, thru });
       } else {
-        // A_тело — одна клетка: прямую достраиваем первой клеткой хвоста
-        if (k === 0) continue;                       // без зазора хвост не дорастить, A[1] взять неоткуда
-        out.push({ b, k, dir, needFirstExt: add(cells[b + k], dir, -1) });
+        if (k === 0) continue;                     // без зазора хвост не дорастить, A[1] взять неоткуда
+        out.push({ b, k, dir: first, needFirstExt: add(cells[b + k], first, -1), tiles, thru });
       }
     }
   }
   return out;
+}
+
+// Совместим ли вариант с полом, который уже сложился: на клетке либо плитка, либо
+// сквозной проход, третьего не дано, и две разные плитки на одной клетке невозможны.
+function floorFits(opt, floor, cap) {
+  let fresh = 0;
+  for (const t of opt.tiles) {
+    const k = ck(t.cell);
+    if (floor.thru.has(k)) return null;
+    const was = floor.tiles.get(k);
+    if (was === undefined) fresh++;
+    else if (was !== t.key) return null;
+  }
+  for (const c of opt.thru) if (floor.tiles.has(ck(c))) return null;
+  if (floor.tiles.size + fresh > cap) return null;
+  return fresh;
+}
+
+function floorTake(opt, floor) {
+  for (const t of opt.tiles) floor.tiles.set(ck(t.cell), t.key);
+  for (const c of opt.thru) floor.thru.add(ck(c));
 }
 
 /* ---------- один обратный ход ---------- */
@@ -244,6 +297,7 @@ export function generate(cfg) {
   let state = [{ id: cfg._nextId++, cells: final }];
   const moves = [];
   const forbidden = new Set(final.map(ck));
+  const floor = { tiles: new Map(), thru: new Set() };   // пол: где колено, а где сквозной проход
   let debt = 0;                                 // недобор зазоров, размазываем по оставшимся ходам
   const allGaps = [];                           // клетки, через которые летят лучи решения — кандидаты в мосты
 
@@ -263,9 +317,17 @@ export function generate(cfg) {
     const cand = [];
     for (const si of order)
       for (const opt of shuffled(rnd, splitOptions(state[si], cfg.maxGap))) cand.push({ si, opt });
-    cand.sort((a, b) => (Math.abs(a.opt.k - aim) - Math.abs(b.opt.k - aim)) || (rank.get(a.si) - rank.get(b.si)));
+    // при равном зазоре предпочитаем вариант, требующий меньше новых колен:
+    // прямой луч читается быстрее, колена нужны там, где без них не выйдет
+    for (const c of cand) c.fresh = floorFits(c.opt, floor, cfg.turns || 0);
+    const fit = cand.filter((c) => c.fresh !== null);
+    fit.sort((a, b) => (Math.abs(a.opt.k - aim) - Math.abs(b.opt.k - aim))
+      || (a.fresh - b.fresh) || (rank.get(a.si) - rank.get(b.si)));
     let done = null;
-    for (const c of cand) { const r = unEat(rnd, cfg, state, c.si, c.opt); if (r) { done = r; break; } }
+    for (const c of fit) {
+      const r = unEat(rnd, cfg, state, c.si, c.opt);
+      if (r) { floorTake(c.opt, floor); done = r; break; }
+    }
     if (!done) break;
     if (!isRest) debt += want[f] - done.move.gap;
     state = done.state;
@@ -288,7 +350,7 @@ export function generate(cfg) {
      то есть луч через неё и так летел. */
   const bridges = [];
   const busy = occSet(state);
-  const gapPool = shuffled(rnd, allGaps.filter((c) => !busy.has(ck(c))));
+  const gapPool = shuffled(rnd, allGaps.filter((c) => !busy.has(ck(c)) && !floor.tiles.has(ck(c))));
   for (const c of gapPool) {
     if (bridges.length >= (cfg.bridges || 0)) break;
     const free = new Set(forbidden); free.delete(ck(c));
@@ -311,14 +373,18 @@ export function generate(cfg) {
     for (const c of d) forbidden.add(ck(c));
   }
   state = state.concat(decoys);
+  const turns = [...floor.tiles].map(([k, v]) => {
+    const [x, y] = k.split(',').map(Number);
+    return [x, y, v[0], v[1]];
+  });
   return { w: cfg.w, h: cfg.h, snakes: state, moves, len: cfg.len,
-           decoys: decoys.length + bridges.length, bridges,
+           decoys: decoys.length + bridges.length, bridges, turns,
            voids: moves.reduce((a, m) => a + m.gap, 0), want, peak: cfg.peak, breather: cfg.breather };
 }
 
 /* ---------- обязательная проверка вперёд ---------- */
 export function verify(lv) {
-  const br = bridgeSet(lv);
+  const br = boardOf(lv);
   let state = lv.snakes.map((s) => ({ id: s.id, cells: s.cells.map((c) => c.slice()) }));
   for (let m = 0; m < lv.moves.length; m++) {
     const mv = lv.moves[m];

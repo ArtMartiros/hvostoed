@@ -6,7 +6,7 @@ import * as G from './generator.mjs';
 const stKey = (st) => st.map((s) => s.cells.map((c) => c.join('.')).join(';')).sort().join('|');
 
 export function solveGoal(lv, target, cap) {
-  const br = G.bridgeSet(lv);
+  const br = G.boardOf(lv);
   const seen = new Map();
   let sols = 0, minMoves = Infinity;
   const dfs = (st, d) => {
@@ -23,7 +23,7 @@ export function solveGoal(lv, target, cap) {
 
 // доля тапов из живых состояний, после которых цель ещё достижима
 export function safety(lv, target) {
-  const br = G.bridgeSet(lv);
+  const br = G.boardOf(lv);
   const memo = new Map();
   const win = (st) => {
     if (G.maxLen(st) >= target) return true;
@@ -56,7 +56,7 @@ export function safety(lv, target) {
 }
 
 export function shape(lv, tries, seed) {
-  const br = G.bridgeSet(lv);
+  const br = G.boardOf(lv);
   const rnd = G.makeRng(seed || 7);
   let far = 0, adj = 0, gaps = 0, steps = 0; const bests = [];
   for (let t = 0; t < tries; t++) {
@@ -80,7 +80,7 @@ export function shape(lv, tries, seed) {
 }
 
 export function beamBest(lv, width) {
-  const br = G.bridgeSet(lv);
+  const br = G.boardOf(lv);
   let layer = [lv.snakes.map((s) => ({ cells: s.cells }))];
   let best = G.maxLen(layer[0]), moves = 0;
   for (let d = 0; d < 60 && layer.length; d++) {
@@ -100,7 +100,7 @@ export function beamBest(lv, width) {
 /* Мемоизированный «достижима ли ещё цель». Граф ациклический: число змей
    строго убывает с каждым ходом, значит рекурсия конечна без счётчика глубины. */
 export function winner(lv, target) {
-  const br = G.bridgeSet(lv);
+  const br = G.boardOf(lv);
   const memo = new Map();
   const win = (st) => {
     if (G.maxLen(st) >= target) return true;
@@ -125,7 +125,7 @@ const tiltOf = (a) => {
 };
 
 export function curve(lv, target) {
-  const br = G.bridgeSet(lv);
+  const br = G.boardOf(lv);
   const win = target ? winner(lv, target) : null;
   let st = lv.snakes.map((s) => ({ id: s.id, cells: s.cells.map((c) => c.slice()) }));
   const rows = [];

@@ -16,6 +16,7 @@ for (const m of src.matchAll(/const (RAW_LEVELS\w*) = \[/g)) {
 if (!PACKS.length) { console.error('RAW_LEVELS не найден'); process.exit(1); }
 
 const ck = (x, y) => x + ',' + y;
+const SIDES = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
 const facing = (c) => [c[0][0] - c[1][0], c[0][1] - c[1][1]];
 
 function occMap(snakes) {
@@ -40,6 +41,12 @@ function raycast(snakes, i, W, H, board) {
       if (hit.si === i) return { kind: 'self' };
       if (hit.ci === hit.len - 1) return hit.spiky ? { kind: 'spikyTail' } : { kind: 'tail', target: hit.si, gap };
       return { kind: 'block' };
+    }
+    const t = board.turns.get(ck(x, y));
+    if (t) {                                          // колено: с открытой стороны гнёт, с закрытой — стена
+      const from = dx === 1 ? 'w' : dx === -1 ? 'e' : dy === 1 ? 'n' : 's';
+      if (t[0] !== from && t[1] !== from) return { kind: 'turnBack' };
+      [dx, dy] = SIDES[t[0] === from ? t[1] : t[0]];
     }
     gap.push([x, y]);
   }
@@ -69,7 +76,8 @@ const maxLen = (s) => Math.max(0, ...s.map((x) => x.cells.length));
 function solve(lv, { allowLaunch, moveCap }) {
   const W = lv.w, H = lv.h;
   const board = { rocks: new Set((lv.rocks || []).map(([x, y]) => ck(x, y))),
-                  bridges: new Set((lv.bridges || []).map(([x, y]) => ck(x, y))) };
+                  bridges: new Set((lv.bridges || []).map(([x, y]) => ck(x, y))),
+                  turns: new Map((lv.turns || []).map(([x, y, a, b]) => [ck(x, y), a + b])) };
   const seen = new Set();
   let best = 0, sols = 0, minMoves = Infinity, bestSeq = null;
   const CAP = 500;
@@ -101,7 +109,8 @@ function solve(lv, { allowLaunch, moveCap }) {
 function geometry(lv) {
   const seenC = new Set();
   const board = { rocks: new Set((lv.rocks || []).map(([x, y]) => ck(x, y))),
-                  bridges: new Set((lv.bridges || []).map(([x, y]) => ck(x, y))) };
+                  bridges: new Set((lv.bridges || []).map(([x, y]) => ck(x, y))),
+                  turns: new Map((lv.turns || []).map(([x, y, a, b]) => [ck(x, y), a + b])) };
   for (const [x, y] of lv.rocks || []) {
     if (x < 0 || y < 0 || x >= lv.w || y >= lv.h) return 'валун вне поля';
   }

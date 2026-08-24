@@ -12,6 +12,7 @@ const M = eval(logic + '\n({ raycast, applyEat, maxLen, stateKey, legalMoves, pl
 const boardOf = (lv) => ({
   rocks: new Set((lv.rocks || []).map(([x, y]) => M.ckey(x, y))),
   bridges: new Set((lv.bridges || []).map(([x, y]) => M.ckey(x, y))),
+  turns: new Map((lv.turns || []).map(([x, y, a, b]) => [M.ckey(x, y), a + b])),
 });
 
 const mkSnakes = (lv) => lv.snakes.map((s, i) => ({ id: 's' + i, cells: s.cells.map((c) => c.slice()) }));
@@ -21,7 +22,8 @@ function walk(level, plan, limit) {
   const map = new Map(plan.map((st) => [st.k, st.sid]));
   let sn = mkSnakes(level), steps = 0;
   const board = { rocks: new Set((level.rocks || []).map(([x, y]) => M.ckey(x, y))),
-                    bridges: new Set((level.bridges || []).map(([x, y]) => M.ckey(x, y))) };
+                    bridges: new Set((level.bridges || []).map(([x, y]) => M.ckey(x, y))),
+                    turns: new Map((level.turns || []).map(([x, y, a, b]) => [M.ckey(x, y), a + b])) };
   while (steps < limit) {
     const sid = map.get(M.stateKey(sn));
     if (sid == null) break;
