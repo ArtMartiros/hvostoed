@@ -248,8 +248,16 @@ function splitOptions(M, maxGap, minB, gates) {
       const tiles = [], thru = [], gated = [];
       let d = first, ok = true;
       for (let t = b + k - 1; t >= b; t--) {
+        /* Портал в зазоре срабатывает ВСЕГДА, а не только когда он по плану.
+           Единственное, что его отменяет, — занятость клетки, а клетки зазора
+           обязаны быть пусты. Значит вариантов ровно два: либо портал уносит
+           луч ровно туда, куда идёт разрез, либо разреза нет.
+           Раньше второй случай проваливался в обычную ветку: план считал шаг
+           прямым, а игра ныряла в портал, и уровень не проходился собственной
+           проверкой вперёд. Это давало 20% брака на «пустотах» и «просторе». */
         const g = gates && gates.get(ck(cells[t]));
-        if (g && g[0] === cells[t - 1][0] && g[1] === cells[t - 1][1]) {
+        if (g) {
+          if (g[0] !== cells[t - 1][0] || g[1] !== cells[t - 1][1]) { ok = false; break; }
           thru.push(cells[t]);                     // клетка портала: плитке колена тут не место
           gated.push(ck(cells[t]));
           continue;                                // направление сохраняется
@@ -335,7 +343,10 @@ function unEat(rnd, cfg, state, si, opt) {
   if (A.cells.length !== n - b) return null;
   const next = state.map((s, i) => (i === si ? A : s));
   next.push(B);
-  return { state: next, move: { eater: A.id, prey: B.id, gap: k, apple: b === 1 }, gapCells };
+  // клетка, на которой луч ОБЯЗАН остановиться: хвост жертвы. Мост на ней
+  // означал бы, что луч над жертвой пролетел, — поэтому её надо знать снаружи
+  return { state: next, move: { eater: A.id, prey: B.id, gap: k, apple: b === 1 },
+           gapCells, stop: B.cells[b - 1].slice() };
 }
 
 /* ---------- раскладка пустот по ходам ----------
@@ -379,21 +390,14 @@ export function generate(cfg) {
   const rnd = makeRng(cfg.seed);
   cfg = { maxGap: 3, tailStraight: 0.6, branch: 0.5, straightBias: 0.55, decoys: 0,
           peak: 1, breather: 3, ...cfg, _nextId: 1 };
-  /* Сколько РАЗНЫХ механик пускать на доску. Ручка «сколько чего» этого не решает:
-     ничто не мешало навалить мосты, колена, яблоки, колючих и спящих на один
-     уровень разом — а это пять правил поверх базового, и читать такое нельзя.
-     Подача по одной-двум за уровень — то, ради чего ручка и нужна. Выбор случайный
-     по сиду: два уровня с одним конфигом окажутся про разное. */
+  /* Сколько РАЗНЫХ механик пускать на доску — вопрос решённый ДО генератора.
+     Раньше срезка жила здесь: ручка «Механик на уровень» молча обнуляла лишние
+     механики случайным выбором по сиду. Замер: при mechs=2 из шести поднятых
+     ручек портал доезжал до доски в 25% сборок, яблоко — в 35%. С точки зрения
+     игрока это ложь ползунка: поднял «Порталов 2» — порталов нет.
+     Теперь ограничение держит МОДАЛКА: подняв лишнюю механику, видишь, как
+     обнуляется другая. Здесь же контракт простой — что в конфиге, то и на доске. */
   const MECHS = ['bridges', 'turns', 'apples', 'spiky', 'sleepy', 'portals'];
-  if (cfg.mechs > 0) {
-    const kinds = MECHS.filter((k) => (cfg[k] || 0) > 0);
-    if (kinds.length > cfg.mechs) {
-      const keep = new Set(shuffled(rnd, kinds).slice(0, cfg.mechs));
-      const cut = {};
-      for (const k of kinds) if (!keep.has(k)) cut[k] = 0;
-      cfg = { ...cfg, ...cut };
-    }
-  }
 
   const laid = walkGated(rnd, cfg);
   if (!laid) return null;
@@ -407,9 +411,12 @@ export function generate(cfg) {
   const moves = [];
   const forbidden = new Set(final.map(ck));
   const floor = { tiles: new Map(), thru: new Set() };   // пол: где колено, а где сквозной проход
-  for (const [x, y, u, v] of portals) { floor.thru.add(ck([x, y])); floor.thru.add(ck([u, v])); }
+  const gateCells = new Set();                  // вход и выход портала: и плитке, и мосту там не место
+  for (const [x, y, u, v] of portals) { gateCells.add(ck([x, y])); gateCells.add(ck([u, v])); }
+  for (const k of gateCells) floor.thru.add(k);
   let debt = 0;                                 // недобор зазоров, размазываем по оставшимся ходам
   const allGaps = [];                           // клетки, через которые летят лучи решения — кандидаты в мосты
+  const stops = new Set();                      // а на этих лучи решения останавливаются — мосту там не место
   let applesLeft = cfg.apples || 0;
   const gatesLeft = new Set(portals.map(([x, y]) => ck([x, y])));
 
@@ -440,8 +447,12 @@ export function generate(cfg) {
       for (const opt of shuffled(rnd, splitOptions(state[si], cfg.maxGap, wantApple ? 1 : 2, gates)))
         cand.push({ si, opt });
     // при равном зазоре предпочитаем вариант, требующий меньше новых колен:
-    // прямой луч читается быстрее, колена нужны там, где без них не выйдет
+    // прямой луч читается быстрее, колена нужны там, где без них не выйдет.
+    // Но пока заказанные колена НЕ НАБРАНЫ, предпочтение обратное: cfg.turns
+    // раньше работал одним лишь потолком, никто к нему не стремился, и ручка
+    // «Колен 3» отдавала в среднем 1.9. Знак сравнения — вся разница.
     for (const c of cand) c.fresh = floorFits(c.opt, floor, cfg.turns || 0);
+    const needTurns = (cfg.turns || 0) - floor.tiles.size;
     const fit = cand.filter((c) => c.fresh !== null);
     /* Портал, через который решение ни разу не проходит, — декорация: змея просто
        лежит сквозь него и лежит. Поэтому ходы, чей луч ныряет в ещё не задействованный
@@ -451,7 +462,8 @@ export function generate(cfg) {
     fit.sort((a, b) => ((b.opt.b === 1) - (a.opt.b === 1))
       || (fresh(b) - fresh(a))
       || (Math.abs(a.opt.k - aim) - Math.abs(b.opt.k - aim))
-      || (a.fresh - b.fresh) || (rank.get(a.si) - rank.get(b.si)));
+      || (needTurns > 0 ? b.fresh - a.fresh : a.fresh - b.fresh)
+      || (rank.get(a.si) - rank.get(b.si)));
     let done = null;
     for (const c of fit) {
       const r = unEat(rnd, cfg, state, c.si, c.opt);
@@ -468,6 +480,7 @@ export function generate(cfg) {
     moves.unshift(done.move);
     for (const s of state) for (const c of s.cells) forbidden.add(ck(c));
     for (const c of done.gapCells) { forbidden.add(ck(c)); allGaps.push(c); }
+    stops.add(ck(done.stop));
   }
   if (moves.length < cfg.minMoves) return null;
 
@@ -481,10 +494,21 @@ export function generate(cfg) {
      проходит над ней, значит на ней МОЖНО кого-то поселить. Отсюда правило —
      мост без змеи на нём бессмыслен (это просто пол), поэтому обманку сажаем
      прямо на него, а не рядом. Решению это не вредит: клетка была зазором,
-     то есть луч через неё и так летел. */
+     то есть луч через неё и так летел.
+
+     Но не всякая клетка зазора годится, и это не придирка. В raycast мост стоит
+     ПЕРВЫМ: раньше занятости, раньше портала, раньше колена. Значит мост — не
+     «клетка, где не читается занятость», а «клетка, где не читается ничего», и
+     запретов ему нужно четыре, а не два:
+       · занято в начальном состоянии, и плитка колена — были и раньше;
+       · клетка портала, вход или выход: мост отменил бы перенос, на который
+         решение рассчитывало. Замер: это давало 19 из 20 пунктов брака;
+       · клетка, где луч решения ОСТАНАВЛИВАЕТСЯ, то есть хвост жертвы: над
+         мостом луч пролетает, и обед не состоится. Ещё пункт брака. */
   const bridges = [];
   const busy = occSet(state);
-  const gapPool = shuffled(rnd, allGaps.filter((c) => !busy.has(ck(c)) && !floor.tiles.has(ck(c))));
+  const gapPool = shuffled(rnd, allGaps.filter((c) => !busy.has(ck(c)) && !floor.tiles.has(ck(c))
+    && !gateCells.has(ck(c)) && !stops.has(ck(c))));
   for (const c of gapPool) {
     if (bridges.length >= (cfg.bridges || 0)) break;
     const free = new Set(forbidden); free.delete(ck(c));
@@ -504,8 +528,12 @@ export function generate(cfg) {
   const eaters = new Set(moves.map((m) => m.eater));
   let sleepLeft = cfg.sleepy || 0;
   // только куски РЕШЕНИЯ: мостовая обманка уже стоит в state, а её работа — стоять
-  // поперёк луча, и «спит» ей ничего не добавляет
-  for (const s of shuffled(rnd, state.filter((s) => !s.decoy && !eaters.has(s.id)))) {
+  // поперёк луча, и «спит» ей ничего не добавляет.
+  // И не яблоки: яблоко спит по своей природе (у одной клетки нет направления
+  // взгляда), пометка ему ничего не добавляет, а бюджет спящих съедала. Замер:
+  // на «просторе» все три яблока сидели в этом же списке, и из трёх заказанных
+  // спящих до доски доезжали две.
+  for (const s of shuffled(rnd, state.filter((s) => !s.decoy && !s.apple && !s.sleep && !eaters.has(s.id)))) {
     if (sleepLeft <= 0) break;
     s.sleep = true; sleepLeft--;
   }
@@ -610,7 +638,10 @@ function trapSpots(start, moves, cfg, forbidden, lv) {
 /* ---------- обязательная проверка вперёд ---------- */
 export function verify(lv) {
   const br = boardOf(lv);
-  let state = lv.snakes.map((s) => ({ id: s.id, cells: s.cells.map((c) => c.slice()) }));
+  // ЧЕРЕЗ stateOf, а не своей сборкой: та теряла spiky и sleep, и проверка шла
+  // по доске, где колючий хвост съедобен, а собственная проверка «спящую
+  // заставили ходить» не могла сработать никогда — sleep там всегда undefined.
+  let state = stateOf(lv);
   for (let m = 0; m < lv.moves.length; m++) {
     const mv = lv.moves[m];
     const i = state.findIndex((s) => s.id === mv.eater);
