@@ -861,6 +861,19 @@ function raycast(snakes, sid, W, H, board) {
   const occ = occMap(snakes);
   let [x, y] = s.cells[0];
   const gap = [];
+  /* Голова САМА может лежать на плитке поворота, и тогда луч рождается ВНУТРИ
+     жёлоба. Клетку головы цикл не читает — он начинает с шага, — поэтому свою
+     плитку проверяем отдельно, иначе стенка держала луч только снаружи, а
+     изнутри он уходил сквозь неё и съедал хвост за стеной.
+     Гнуть тут нечего: выход поворота выбирается по стороне ВХОДА, а у луча,
+     родившегося внутри плитки, её нет. Открытая сторона выпускает, закрытая
+     останавливает — та же стенка, что и снаружи. */
+  const own = board.turns.get(ckey(x, y));
+  if (own) {
+    const out = sideName([dx, dy]);
+    if (own[0] !== out && own[1] !== out)
+      return { kind: "turnBack", gap, hitCell: [x, y], dir: [dx, dy] };
+  }
   const cap = 4 * W * H + 8;                    // порталы можно замкнуть в кольцо
   for (let step = 0; ; step++) {
     if (step > cap) return { kind: "loop", gap, dir: [dx, dy] };
@@ -1372,8 +1385,18 @@ function RayView({ ray, from, color }) {
   // луч может гнуться в поворотах, поэтому рисуем ломаную по его собственным клеткам
   const pts = [[hx, hy], ...ray.gap.map(([x, y]) => [x * CS + CS / 2, y * CS + CS / 2])];
   const tail = pts[pts.length - 1];
-  const x2 = ray.hitCell ? ray.hitCell[0] * CS + CS / 2 - ray.dir[0] * 34 : tail[0] + ray.dir[0] * CS * 0.62;
-  const y2 = ray.hitCell ? ray.hitCell[1] * CS + CS / 2 - ray.dir[1] * 34 : tail[1] + ray.dir[1] * CS * 0.62;
+  /* Стенка СВОЕЙ же плитки — единственная преграда, до которой луч не пролетает
+     ни одной клетки: голова уже лежит в жёлобе. Поэтому крестик ставим на саму
+     стенку (46 — там её рисует TurnWalls), а не в центр клетки: в центре голова,
+     и крестик поверх неё читается как «сломалась змея», а не «здесь глухо». */
+  const own = ray.hitCell && ray.hitCell[0] === from[0] && ray.hitCell[1] === from[1];
+  const mark = ray.hitCell
+    ? (own ? [hx + ray.dir[0] * 46, hy + ray.dir[1] * 46]
+           : [ray.hitCell[0] * CS + CS / 2, ray.hitCell[1] * CS + CS / 2])
+    : null;
+  const back = own ? 0 : 34;                    // упор луча не доходит до центра преграды
+  const x2 = mark ? mark[0] - ray.dir[0] * back : tail[0] + ray.dir[0] * CS * 0.62;
+  const y2 = mark ? mark[1] - ray.dir[1] * back : tail[1] + ray.dir[1] * CS * 0.62;
   pts.push([x2, y2]);
   const dPath = dStr(pts);
   return (
@@ -1387,7 +1410,7 @@ function RayView({ ray, from, color }) {
                  " l" + (ray.dir[0] * 26 + ray.dir[1] * 14) + " " + (ray.dir[1] * 26 + ray.dir[0] * 14)}
           stroke={color} strokeWidth="10" strokeLinecap="round" fill="none" />
       ) : (
-        <g transform={"translate(" + (ray.hitCell[0] * CS + CS / 2) + " " + (ray.hitCell[1] * CS + CS / 2) + ")"}>
+        <g transform={"translate(" + mark[0] + " " + mark[1] + ")"}>
           <line x1="-15" y1="-15" x2="15" y2="15" stroke={color} strokeWidth="11" strokeLinecap="round" />
           <line x1="15" y1="-15" x2="-15" y2="15" stroke={color} strokeWidth="11" strokeLinecap="round" />
         </g>
