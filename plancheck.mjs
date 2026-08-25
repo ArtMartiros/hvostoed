@@ -7,11 +7,48 @@
    вырезается из .jsx и гоняется по свежесобранным уровням каждого пресета. */
 import fs from 'fs';
 import { PRESETS, craftOnce } from './presets.mjs';
+import * as G from './generator.mjs';
 
 const src = fs.readFileSync('hvostoed.jsx', 'utf8');
 const logic = src.slice(src.indexOf('const SIDES = { n:'), src.indexOf('function buildEatMove'));
 const M = eval(logic + '\n({ raycast, applyEat, maxLen, stateKey, walkSids, ckey })');
+const solverSrc = fs.readFileSync('solver.js', 'utf8');
+const S = eval(solverSrc.slice(solverSrc.indexOf('const ck = (x, y)'),
+  solverSrc.indexOf('function applyEat')) + '\n({ raycast })');
 const WANT = Number(process.argv[2] || 5);
+
+/* Стенка поворота проверяется РЕГРЕССИЕЙ, а не статистикой. Ломал её оба раза не
+   редкий уровень, а порядок чтения клетки, и оба раза это приезжало одной и той же
+   жалобой: «змея прошла сквозь стену и съела хвост». Пресетами такое не поймать —
+   план генератора собран из УДАВШИХСЯ ходов, а здесь проверяется ровно тот, что
+   обязан НЕ удаться. Поэтому доска руками, и все три копии механики отвечают сами.
+
+   Правило целиком: стенки плитки держат луч с обеих сторон — и снаружи, и из
+   собственной клетки, — а вот изгиб работает только на пустой клетке, потому что
+   выход выбирается по стороне ВХОДА, а её нет ни у луча, остановленного телом,
+   ни у луча, родившегося внутри жёлоба. */
+function turnWallCase() {
+  const bd = { rocks: new Set(), bridges: new Set(), gates: new Map(),
+    turns: new Map([['2,1', 'nw']]) };            // открыты север и запад, стенки на юге и востоке
+  const cases = [
+    ['голова лежит в жёлобе и смотрит в стенку — за стенкой хвост',
+      [[[2, 1], [1, 1]], [[4, 1], [3, 1]]], 'turnBack'],
+    ['голова лежит в жёлобе и смотрит в открытую сторону — луч выходит как обычно',
+      [[[2, 1], [2, 2]], [[3, 0], [2, 0]]], 'tail'],
+    ['луч снаружи бьёт плитке в спину, а на плитке лежит хвост',
+      [[[2, 2], [2, 3]], [[3, 1], [2, 1]]], 'turnBack'],
+  ];
+  const fails = [];
+  for (const [nom, cells, want] of cases) {
+    const mk = () => cells.map((c, i) => ({ id: 's' + i, cells: c.map((q) => q.slice()) }));
+    const got = { игра: M.raycast(mk(), 's0', 5, 4, bd).kind,
+      генератор: G.raycast(mk(), 0, 5, 4, bd).kind,
+      солвер: S.raycast(mk(), 0, 5, 4, bd).kind };
+    for (const who of Object.keys(got))
+      if (got[who] !== want) fails.push(`${nom}: ${who} отвечает «${got[who]}», а надо «${want}»`);
+  }
+  return fails;
+}
 
 /* Отдельным прогоном — доска, где включено ВСЁ сразу и погуще, чем в пресетах:
    тест обязан хоть раз прогнать луч через портал, мост и поворот на одной доске.
@@ -30,6 +67,12 @@ const CASES = Object.keys(PRESETS).filter((n) => !PRESETS[n].record).map((n) => 
   .concat([['колючая ест последней', { ...PRESETS['средний'], decoys: 2, spiky: 3, sleepy: 1 }, true]]);
 
 let bad = 0;
+const wall = turnWallCase();
+if (wall.length) bad++;
+console.log(`  ${'стенка поворота'.padEnd(9)} проверок 9, ` +
+  (wall.length ? 'РАСХОЖДЕНИЕ' : 'все три копии механики держат стенку'));
+wall.forEach((f) => console.log('      ' + f));
+
 for (const [name, preset, lead] of CASES) {
   let ok = 0, tried = 0;
   const fails = [];
