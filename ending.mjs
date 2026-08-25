@@ -1,10 +1,11 @@
 /* Проверка правила конца партии на коде, вырезанном из самой игры.
-   Цель — порог, а не финиш: партия обязана продолжаться, пока змея может расти.
-   Здесь canGrow из игры сверяется с честным полным перебором на каждом состоянии
-   вдоль всей партии, а не только на старте. */
+   Нижняя отметка — порог, а не финиш: партия обязана продолжаться, пока змея может
+   расти, иначе верхние звёзды недобираемы. Здесь canGrow из игры сверяется с честным
+   полным перебором на каждом состоянии вдоль всей партии, а не только на старте.
+   Заодно ловим занижённый потолок: жадная партия не имеет права его перерасти. */
 import fs from 'fs';
 const src = fs.readFileSync(process.argv[2] || 'hvostoed.jsx', 'utf8');
-const logic = src.slice(src.indexOf('const facing = (cells)'), src.indexOf('function buildEatMove'));
+const logic = src.slice(src.indexOf('const SIDES = { n:'), src.indexOf('function buildEatMove'));
 const M = eval(logic + '\n({ raycast, applyEat, maxLen, stateKey, legalMoves, canGrow, ckey })');
 const grab = (n) => { const i = src.indexOf(`const ${n} = [`); const j = src.indexOf('\n];', i);
   return eval(src.slice(i + `const ${n} = `.length, j + 3)); };
@@ -27,14 +28,15 @@ function trueCanGrow(level, snakes, board, base) {
   return false;
 }
 
-let bad = 0, states = 0, ends = 0, over = 0;
-for (const packName of ['RAW_LEVELS', 'RAW_LEVELS_VOID', 'RAW_FIELDS']) {
+let bad = 0, states = 0, ends = 0, over = 0;   // over — сколько раз жадность переросла потолок
+for (const packName of ['RAW_LEVELS', 'RAW_LEVELS_VOID']) {
   const levels = grab(packName);
   console.log(`\n### ${packName}`);
   levels.forEach((lv, li) => {
     const board = { rocks: new Set((lv.rocks || []).map(([x, y]) => M.ckey(x, y))),
                       bridges: new Set((lv.bridges || []).map(([x, y]) => M.ckey(x, y))),
-                      turns: new Map((lv.turns || []).map(([x, y, a, b]) => [M.ckey(x, y), a + b])) };
+                      turns: new Map((lv.turns || []).map(([x, y, a, b]) => [M.ckey(x, y), a + b])),
+                      gates: new Map((lv.portals || []).map(([x, y, u, v]) => [M.ckey(x, y), [u, v]])) };
     // жадно доигрываем партию до конца, на каждом шаге сверяя canGrow с перебором
     const seen = new Set();
     let sn = mk(lv), steps = 0, endedAt = null;
@@ -55,15 +57,17 @@ for (const packName of ['RAW_LEVELS', 'RAW_LEVELS_VOID', 'RAW_FIELDS']) {
     }
     ends += endedAt != null ? 1 : 0;
     const fin = M.maxLen(sn);
-    const tgt = lv.target || 0;
-    if (tgt && fin > tgt) over++;
+    const top = lv.ceiling || 0;
+    // Жадная партия не имеет права перерасти объявленный потолок: потолок — это
+    // максимум, до которого доска даёт дорасти, и на нём стоит верхняя звезда.
+    if (top && fin > top) { over++; bad++; }
     console.log(`  ${String(li + 1).padStart(2)}. ${(lv.name || '').padEnd(14)} ` +
-      `жадная партия: ${steps} ходов, длина ${fin}${tgt ? '/' + tgt : ''}` +
+      `жадная партия: ${steps} ходов, длина ${fin}${top ? '/' + top : ''}` +
       `${endedAt != null ? ' — конец по «расти некуда»' : ' — обрыв по лимиту'}` +
-      `${tgt && fin > tgt ? '  ЦЕЛЬ ПЕРЕБИТА' : ''}`);
+      `${top && fin > top ? '  !! ПОТОЛОК ЗАНИЖЕН' : ''}`);
   });
 }
 console.log(`\nСверено состояний: ${states}, расхождений canGrow с перебором: ${bad}`);
-console.log(`Партий, дошедших до честного конца: ${ends}`);
+console.log(`Партий, дошедших до честного конца: ${ends}, потолок занижен на ${over} уровнях`);
 if (bad) { console.log('\nПРАВИЛО КОНЦА СЛОМАНО'); process.exit(1); }
 console.log('\nПРАВИЛО КОНЦА КОРРЕКТНО: партия кончается ровно тогда, когда рост невозможен');

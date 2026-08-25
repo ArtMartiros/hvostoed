@@ -48,7 +48,7 @@ class R {
 export function encode(rec) {
   const lv = rec.level, w = new W();
   const rec_ = rec.mode === 'record' || lv.mode === 'record';
-  w.u8(1).u8(lv.w).u8(lv.h).u8(rec_ ? 1 : 0).u16(rec_ ? (lv.ceiling || 0) : (lv.target || 0));
+  w.u8(1).u8(lv.w).u8(lv.h).u8(rec_ ? 1 : 0).u16(lv.ceiling || lv.target || 0);
   w.list(lv.snakes, (o, s) => {
     o.u8(s.cells.length).u8((s.spiky ? 1 : 0) | (s.sleep ? 2 : 0) | (s.apple ? 4 : 0));
     for (const [x, y] of s.cells) o.u8(x).u8(y);
@@ -79,7 +79,7 @@ export function decode(str) {
   const fl = r.u8();
   const goal = r.u16();
   lv.mode = fl & 1 ? 'record' : 'goal';
-  if (fl & 1) lv.ceiling = goal; else lv.target = goal;
+  lv.ceiling = goal;      // одно число на оба режима: верхняя отметка она же потолок поля
   lv.snakes = r.list((o) => {
     const n = o.u8(), f = o.u8(), cells = [];
     for (let k = 0; k < n; k++) cells.push([o.u8(), o.u8()]);

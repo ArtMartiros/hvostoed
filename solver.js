@@ -1,6 +1,12 @@
-// Солвер «Хвостоеда» v3: валуны (rocks), колючие (spiky), спящие (sleep), лимит ходов (moves)
+// Солвер «Хвостоеда» v4: валуны (rocks), колючие (spiky), спящие (sleep), лимит ходов (moves)
+// и ОТМЕТКИ: у уровня объявлен потолок (ceiling), от него считаются три звезды.
+// Ворота проверяют не «дошёл ли кто-то до цели», а что объявленный потолок —
+// ровно тот, до которого доска даёт дорасти: ни ниже (звезда была бы даром),
+// ни выше (верхняя звезда была бы недостижима, как прежняя «осталась одна змея»).
 // Использование: node solver.js /путь/к/hvostoed.jsx
 import fs from 'fs';
+// Формула отметок общая на игру, генератор и метрики — берём её оттуда, а не переписываем.
+import { marksOf } from './generator.mjs';
 
 const argv = process.argv.slice(2);
 const packFilter = (argv.find((a) => a.startsWith('--pack=')) || '').slice(7);
@@ -14,6 +20,7 @@ for (const m of src.matchAll(/const (RAW_LEVELS\w*) = \[/g)) {
   PACKS.push({ name: m[1], levels: eval(src.slice(m.index + `const ${m[1]} = `.length, end + 3)) });
 }
 if (!PACKS.length) { console.error('RAW_LEVELS не найден'); process.exit(1); }
+
 
 const ck = (x, y) => x + ',' + y;
 const SIDES = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
@@ -91,7 +98,7 @@ const key = (s) => s.map((x) => (x.spiky ? '!' : '') + (x.sleep ? 'z' : '') + (x
 const maxLen = (s) => Math.max(0, ...s.map((x) => x.cells.length));
 
 // Полный перебор с метриками. moveCap: ограничение длины решения (null = без лимита)
-function solve(lv, { allowLaunch, moveCap }) {
+function solve(lv, { allowLaunch, moveCap, goal }) {
   const W = lv.w, H = lv.h;
   const board = { rocks: new Set((lv.rocks || []).map(([x, y]) => ck(x, y))),
                   bridges: new Set((lv.bridges || []).map(([x, y]) => ck(x, y))),
@@ -103,7 +110,7 @@ function solve(lv, { allowLaunch, moveCap }) {
   function dfs(snakes, depth, seq) {
     const ml = maxLen(snakes);
     if (ml > best) best = ml;
-    if (ml >= lv.target) {
+    if (ml >= goal) {
       sols++;
       if (depth < minMoves) { minMoves = depth; bestSeq = seq.slice(); }
       return;
@@ -123,6 +130,30 @@ function solve(lv, { allowLaunch, moveCap }) {
   }
   dfs(lv.snakes.map((s) => ({ cells: s.cells, spiky: !!s.spiky, sleep: !!s.sleep || !!s.apple, apple: !!s.apple })), 0, []);
   return { best, sols, minMoves: sols ? minMoves : null, bestSeq };
+}
+
+function ceilingOf(lv) {
+  const W = lv.w, H = lv.h;
+  const board = { rocks: new Set((lv.rocks || []).map(([x, y]) => ck(x, y))),
+                  bridges: new Set((lv.bridges || []).map(([x, y]) => ck(x, y))),
+                  turns: new Map((lv.turns || []).map(([x, y, a, b]) => [ck(x, y), a + b])),
+                  gates: new Map((lv.portals || []).map(([x, y, u, v]) => [ck(x, y), [u, v]])) };
+  const seen = new Set();
+  let best = 0;
+  const dfs = (snakes) => {
+    const k = key(snakes);
+    if (seen.has(k)) return;
+    seen.add(k);
+    best = Math.max(best, maxLen(snakes));
+    for (let i = 0; i < snakes.length; i++) {
+      if (snakes[i].sleep) continue;
+      const r = raycast(snakes, i, W, H, board);
+      if (r.kind === 'tail') dfs(applyEat(snakes, i, r));
+      else if (r.kind === 'edge') dfs(snakes.filter((_, si) => si !== i));
+    }
+  };
+  dfs(lv.snakes.map((s) => ({ cells: s.cells, spiky: !!s.spiky, sleep: !!s.sleep || !!s.apple, apple: !!s.apple })));
+  return best;
 }
 
 function geometry(lv) {
@@ -160,21 +191,35 @@ pack.levels.forEach((lv, i) => {
   const total = lv.snakes.reduce((a, s) => a + s.cells.length, 0);
   const geo = geometry(lv);
   const cap = lv.moves != null ? lv.moves : null;
-  const inCap = solve(lv, { allowLaunch: true, moveCap: cap });
-  const noL = solve(lv, { allowLaunch: false, moveCap: cap });
-  const loose = cap != null ? solve(lv, { allowLaunch: true, moveCap: null }) : null;
+  const goal = lv.ceiling;
+  const inCap = solve(lv, { allowLaunch: true, moveCap: cap, goal });
+  const noL = solve(lv, { allowLaunch: false, moveCap: cap, goal });
   const solvable = inCap.sols > 0;
-  if (geo !== 'ok' || !solvable) allOk = false;
+  const start = Math.max(...lv.snakes.map((s) => s.cells.length));
+  const marks = marksOf(goal, start);
+  const реально = ceilingOf(lv);
+  const беды = [];
+  if (geo !== 'ok') беды.push('гео: ' + geo);
+  if (!solvable) беды.push('верхняя отметка недостижима');
+  if (реально !== goal) беды.push(`объявлен потолок ${goal}, доска даёт ${реально}`);
+  if (!(marks[0] < marks[1] && marks[1] < marks[2])) беды.push('отметки слиплись: ' + marks.join('/'));
+  /* Нижнюю отметку формула поднимает выше стартовой длины — иначе звезда горит до
+     первого тапа. Но если весь рост уровня меньше трёх клеток (стартовая змея почти
+     дотягивает до потолка), трём отметкам разойтись негде, и это свойство доски, а
+     не ошибка: ругаемся только когда место БЫЛО. */
+  if (marks[0] <= start && goal - start >= 3) беды.push(`нижняя отметка ${marks[0]} не выше стартовой длины ${start}`);
+  const узко = marks[0] <= start;
+  if (беды.length) allOk = false;
   console.log(
-    `${String(i + 1).padStart(2)}. ${lv.name.padEnd(10)} ${lv.w}x${lv.h} цель=${lv.target} total=${total}` +
+    `${String(i + 1).padStart(2)}. ${lv.name.padEnd(10)} ${lv.w}x${lv.h} отметки=${marks.join('/')} total=${total}` +
     (cap != null ? ` ходы<=${cap}` : '') +
-    ` | гео=${geo} | решений=${inCap.sols} minMoves=${inCap.minMoves}` +
+    ` | гео=${geo} | линий до потолка=${inCap.sols} minMoves=${inCap.minMoves}` +
     ` | без выпусков: best=${noL.best} sols=${noL.sols}` +
-    (loose ? ` | без лимита ходов: sols=${loose.sols} minMoves=${loose.minMoves}` : '') +
-    ` | выпуск обязателен=${noL.sols === 0 && solvable} | РЕШАЕМ=${solvable}`
+    ` | выпуск обязателен=${noL.sols === 0 && solvable}` +
+    (беды.length ? ` | !! ${беды.join('; ')}` : узко ? ' | ОК (шкала узкая: часть звёзд горит со старта)' : ' | ОК')
   );
   if (solvable) console.log('     пример: ' + inCap.bestSeq.join(', '));
 });
 }
-console.log(allOk ? '\nВСЕ УРОВНИ КОРРЕКТНЫ И РЕШАЕМЫ' : '\n!! ЕСТЬ ПРОБЛЕМЫ');
+console.log(allOk ? '\nВСЕ УРОВНИ КОРРЕКТНЫ: геометрия цела, потолок объявлен верно, отметки берутся' : '\n!! ЕСТЬ ПРОБЛЕМЫ');
 process.exit(allOk ? 0 : 1);

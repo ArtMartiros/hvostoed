@@ -6,7 +6,7 @@ const to = src.indexOf('function buildEatMove');
 const logic = src.slice(from, to);
 const grab = (n) => { const i = src.indexOf(`const ${n} = [`); const j = src.indexOf('\n];', i);
   return eval(src.slice(i + `const ${n} = `.length, j + 3)); };
-const VOID = grab('RAW_LEVELS_VOID'), FIELDS = grab('RAW_FIELDS');
+const PACKS = [['ПУСТОТА', grab('RAW_LEVELS_VOID')], ['КАМПАНИЯ', grab('RAW_LEVELS')]];
 const M = eval(logic + '\n({ raycast, applyEat, maxLen, stateKey, legalMoves, planGoal, planLongest, ckey })');
 
 const boardOf = (lv) => ({
@@ -35,27 +35,23 @@ function walk(level, plan, limit) {
   return { len: M.maxLen(sn), steps, left: sn.length };
 }
 
+/* Подсказка обязана доводить до ПОТОЛКА поля, а не до нижней отметки: звёзды — это
+   отметки длины, и совет, обрывающийся на первой звезде, бросает игрока там, где
+   игра только начинается. Проверяем оба пака: раньше проверялись одни пустоты. */
 let ok = true;
-console.log('ЦЕЛЕВЫЕ УРОВНИ — подсказка обязана вести к кратчайшей победе');
-VOID.forEach((lv, i) => {
-  const t = Date.now();
-  const plan = M.planGoal(lv, mkSnakes(lv), boardOf(lv));
-  const ms = Date.now() - t;
-  if (!plan) { console.log(`  ${i + 1}. ${lv.name} — ПЛАН НЕ НАЙДЕН`); ok = false; return; }
-  const r = walk(lv, plan, 40);
-  const win = !r.bad && r.len >= lv.target;
-  if (!win) ok = false;
-  console.log(`  ${String(i + 1).padStart(2)}. ${lv.name.padEnd(12)} план ${String(plan.length).padStart(2)} ходов → длина ${r.len}/${lv.target} ${win ? 'ПОБЕДА' : 'ПРОВАЛ ' + (r.bad || '')} (${ms} мс)`);
-});
-console.log('\nПОЛЯ РЕКОРДА — подсказка обязана довести до заявленного потолка');
-FIELDS.forEach((lv) => {
-  const t = Date.now();
-  const plan = M.planLongest(lv, mkSnakes(lv), boardOf(lv));
-  const ms = Date.now() - t;
-  const r = walk(lv, plan, 60);
-  const hit = !r.bad && r.len >= lv.ceiling;
-  if (!hit) ok = false;
-  console.log(`  ${lv.name.padEnd(16)} план ${String(plan.length).padStart(2)} ходов → длина ${r.len}/${lv.ceiling} ${hit ? 'ПОТОЛОК ВЗЯТ' : 'НЕ ДОТЯНУЛ ' + (r.bad || '')} (${ms} мс)`);
-});
-console.log(ok ? '\nПОДСКАЗКА КОРРЕКТНА НА ВСЕХ УРОВНЯХ И ПОЛЯХ' : '\n!! ПОДСКАЗКА ГДЕ-ТО ВРЁТ');
+for (const [nom, levels] of PACKS) {
+  console.log(`${nom} — подсказка обязана вести к потолку кратчайшим путём`);
+  levels.forEach((lv, i) => {
+    const t = Date.now();
+    const plan = M.planGoal(lv, mkSnakes(lv), boardOf(lv));
+    const ms = Date.now() - t;
+    if (!plan) { console.log(`  ${i + 1}. ${lv.name} — ПЛАН НЕ НАЙДЕН`); ok = false; return; }
+    const r = walk(lv, plan, 40);
+    const hit = !r.bad && r.len >= lv.ceiling;
+    if (!hit) ok = false;
+    console.log(`  ${String(i + 1).padStart(2)}. ${lv.name.padEnd(16)} план ${String(plan.length).padStart(2)} ходов → длина ${r.len}/${lv.ceiling} ${hit ? 'ПОТОЛОК ВЗЯТ' : 'НЕ ДОТЯНУЛ ' + (r.bad || '')} (${ms} мс)`);
+  });
+  console.log('');
+}
+console.log(ok ? 'ПОДСКАЗКА КОРРЕКТНА НА ВСЕХ УРОВНЯХ' : '!! ПОДСКАЗКА ГДЕ-ТО ВРЁТ');
 process.exit(ok ? 0 : 1);

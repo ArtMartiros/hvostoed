@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, Undo2, RotateCcw, Star, Play, Lightbulb, Wand2, Copy, Trash2, X, Sliders, Flag } from "lucide-react";
 import { PRESETS, craftOnce, voidCeiling } from "./presets.mjs";
+import { marksOf } from "./generator.mjs";
 import { encode as encodeShare, CFG_KEYS, REASONS } from "./sharecode.mjs";
 
 /* ================================================================
@@ -31,7 +32,7 @@ const ORDER = ["green", "blue", "orange", "plum", "pink", "teal", "red"];
 const RAW_LEVELS = [
   {
     name: "Разминка", lesson: "Тапни змею — она съест хвост, на который смотрит.",
-    w: 7, h: 5, target: 6,
+    w: 7, h: 5, ceiling: 6,
     snakes: [
       { cells: [[1, 2], [0, 2]] },
       { cells: [[4, 2], [3, 2]] },
@@ -40,7 +41,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Цепочка", lesson: "После обеда змея смотрит туда же, куда смотрела съеденная.",
-    w: 7, h: 7, target: 9,
+    w: 7, h: 7, ceiling: 9,
     snakes: [
       { cells: [[1, 3], [0, 3], [0, 4], [1, 4]] },
       { cells: [[3, 1], [3, 0]] },
@@ -49,7 +50,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Жертва", lesson: "Кого-то придётся выпустить с поля, чтобы открыть дорогу.",
-    w: 7, h: 6, target: 8,
+    w: 7, h: 6, ceiling: 8,
     snakes: [
       { cells: [[1, 2], [0, 2]] },
       { cells: [[6, 3], [6, 2], [5, 2], [4, 2]] },
@@ -59,7 +60,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Впритык", lesson: "Длины хватает ровно на одну жертву. Выбери верную.",
-    w: 7, h: 6, target: 12,
+    w: 7, h: 6, ceiling: 12,
     snakes: [
       { cells: [[3, 2], [2, 2]] },
       { cells: [[0, 0], [0, 1], [1, 1]] },
@@ -70,7 +71,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Клубок", lesson: "Съешь всё поле. Терять нельзя никого.",
-    w: 6, h: 6, target: 23,
+    w: 6, h: 6, ceiling: 23,
     snakes: [
       { cells: [[0, 3], [0, 4], [0, 5], [1, 5], [1, 4], [2, 4]] },
       { cells: [[3, 1], [3, 0], [2, 0], [2, 1]] },
@@ -82,7 +83,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Пир", lesson: "Маленькая зелёная против всех. Съешь всё поле.",
-    w: 7, h: 7, target: 38,
+    w: 7, h: 7, ceiling: 38,
     snakes: [
       { cells: [[4, 0], [3, 0]] },
       { cells: [[4, 4], [4, 5], [5, 5]] },
@@ -94,7 +95,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Валуны", lesson: "Валун не съесть и не сдвинуть — взгляд в него упирается.",
-    w: 7, h: 6, target: 9,
+    w: 7, h: 6, ceiling: 9,
     rocks: [[3, 0], [3, 1], [3, 2], [3, 4], [3, 5]],
     snakes: [
       { cells: [[1, 3], [0, 3]] },
@@ -105,7 +106,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Колючка", lesson: "Колючую не съесть. Но она тоже голодна — покорми её, чтобы сдвинуть.",
-    w: 7, h: 6, target: 8,
+    w: 7, h: 6, ceiling: 8,
     snakes: [
       { cells: [[1, 2], [0, 2]] },
       { cells: [[3, 2], [3, 1]], spiky: true },
@@ -117,7 +118,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Прицел", lesson: "Взгляд в чужое тело — авария. Тапай лишь тех, кто видит хвост.",
-    w: 5, h: 5, target: 7,
+    w: 5, h: 5, ceiling: 7,
     snakes: [
       { cells: [[3, 3], [3, 4]] },
       { cells: [[2, 1], [3, 1], [3, 2]] },
@@ -127,7 +128,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Очередь", lesson: "Обед подтягивает хвост — и очередь доходит до соседа.",
-    w: 7, h: 6, target: 10,
+    w: 7, h: 6, ceiling: 12,
     snakes: [
       { cells: [[2, 1], [1, 1], [0, 1]] },
       { cells: [[5, 1], [4, 1]] },
@@ -138,7 +139,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Привратница", lesson: "Хвост колючей запер щель. Покорми её — хвост выйдет сам.",
-    w: 7, h: 6, target: 8,
+    w: 7, h: 6, ceiling: 8,
     rocks: [[4, 0], [4, 1], [5, 3], [6, 3]],
     snakes: [
       { cells: [[4, 3], [4, 2]], spiky: true },
@@ -150,7 +151,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Ёж", lesson: "Хвост колючей — тоже мина. Покорми её, и хвост уползёт.",
-    w: 6, h: 6, target: 9,
+    w: 6, h: 6, ceiling: 9,
     rocks: [[0, 1]],
     snakes: [
       { cells: [[3, 1], [4, 1], [5, 1]], spiky: true },
@@ -163,7 +164,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Сквозняк", lesson: "Освободи коридор — и прокатись через всю пустоту.",
-    w: 7, h: 7, target: 7,
+    w: 7, h: 7, ceiling: 7,
     snakes: [
       { cells: [[1, 3], [0, 3]] },
       { cells: [[4, 3], [4, 2]] },
@@ -174,7 +175,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Шлюз", lesson: "Напрямик через две щели не пройти. Съешь — развернёшься.",
-    w: 7, h: 7, target: 11,
+    w: 7, h: 7, ceiling: 11,
     rocks: [[2, 0], [2, 1], [2, 2], [2, 3], [2, 5], [2, 6], [3, 1], [4, 1], [6, 1]],
     snakes: [
       { cells: [[1, 4], [0, 4]] },
@@ -188,7 +189,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Сапёр", lesson: "Поле заминировано взглядами. Иди по цепочке хвостов.",
-    w: 6, h: 6, target: 12,
+    w: 6, h: 6, ceiling: 14,
     snakes: [
       { cells: [[3, 2], [3, 3]] },
       { cells: [[1, 1], [2, 1], [3, 1]] },
@@ -201,7 +202,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Карман", lesson: "Из кармана не выходят. Загляни туда последним ходом.",
-    w: 7, h: 5, target: 9,
+    w: 7, h: 5, ceiling: 9,
     rocks: [[5, 2], [6, 1]],
     snakes: [
       { cells: [[2, 4], [3, 4]] },
@@ -213,7 +214,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Мельница", lesson: "Половина тапов — в камень. Читай направления, не тыкай.",
-    w: 7, h: 7, target: 9,
+    w: 7, h: 7, ceiling: 10,
     rocks: [[3, 2], [2, 3], [4, 3], [3, 4]],
     snakes: [
       { cells: [[1, 0], [0, 0]] },
@@ -228,7 +229,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Размен", lesson: "Обе малышки просятся на волю. Отпусти ту, что стоит стеной.",
-    w: 7, h: 6, target: 10,
+    w: 7, h: 6, ceiling: 10,
     snakes: [
       { cells: [[1, 4], [0, 4], [0, 5]] },
       { cells: [[4, 3], [4, 4]] },
@@ -239,7 +240,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Самозванец", lesson: "Запертый — не всегда герой. Стоящий у выхода — не всегда жертва.",
-    w: 7, h: 6, target: 9,
+    w: 7, h: 6, ceiling: 9,
     snakes: [
       { cells: [[2, 3], [1, 3]] },
       { cells: [[4, 4], [4, 3], [4, 2]] },
@@ -250,7 +251,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Западня", lesson: "Колючая гостья легла поперёк поля. Выпусти её вовремя — и съешь всё.",
-    w: 7, h: 7, target: 30,
+    w: 7, h: 7, ceiling: 30,
     snakes: [
       { cells: [[2, 1], [1, 1], [0, 1], [0, 2], [1, 2], [2, 2], [3, 2], [4, 2], [4, 3]] },
       { cells: [[5, 0], [4, 0], [4, 1]] },
@@ -262,7 +263,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Глубокая пробка", lesson: "Пробка в две клетки: корми дважды — потом выдёргивай.",
-    w: 7, h: 6, target: 10,
+    w: 7, h: 6, ceiling: 10,
     rocks: [[3, 0], [4, 0], [3, 2], [4, 2], [2, 5], [5, 3], [6, 3], [6, 4]],
     snakes: [
       { cells: [[2, 2], [2, 1], [3, 1], [4, 1]], spiky: true },
@@ -275,7 +276,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Крошки", lesson: "Великана тоже съедят — до последней клетки.",
-    w: 7, h: 7, target: 33,
+    w: 7, h: 7, ceiling: 33,
     rocks: [[3, 1], [4, 0], [5, 1]],
     snakes: [
       { cells: [[5, 6], [6, 6]] },
@@ -288,7 +289,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Этикет", lesson: "Никто не начинает раньше старших. И никто не переедает.",
-    w: 5, h: 6, target: 12,
+    w: 5, h: 6, ceiling: 12,
     snakes: [
       { cells: [[2, 3], [1, 3]] },
       { cells: [[4, 2], [4, 3], [4, 4]] },
@@ -299,7 +300,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Гордость", lesson: "Все смотрят на выход. Отпустить придётся самую большую.",
-    w: 7, h: 5, target: 10,
+    w: 7, h: 5, ceiling: 10,
     snakes: [
       { cells: [[1, 0], [0, 0]] },
       { cells: [[3, 0], [3, 1], [3, 2], [4, 2], [4, 1], [5, 1]] },
@@ -311,7 +312,7 @@ const RAW_LEVELS = [
   },
   {
     name: "Обжора", lesson: "Колючую не съесть — она обязана съесть всех сама.",
-    w: 7, h: 7, target: 30,
+    w: 7, h: 7, ceiling: 30,
     snakes: [
       { cells: [[4, 1], [3, 1], [3, 0], [4, 0]], spiky: true },
       { cells: [[6, 3], [6, 2]] },
@@ -328,7 +329,7 @@ const RAW_LEVELS = [
 const RAW_LEVELS_VOID = [
   {
     name: "Хоровод", lesson: "Тапни змею — она проглотит хвост, на который смотрит.",
-    w: 5, h: 3, target: 8,
+    w: 5, h: 3, ceiling: 8,
     snakes: [
       { cells: [[1, 0], [0, 0]] },
       { cells: [[3, 2], [4, 2], [4, 1], [4, 0]] },
@@ -337,7 +338,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Взгляд", lesson: "После обеда змея смотрит туда же, куда смотрела съеденная.",
-    w: 5, h: 4, target: 7,
+    w: 5, h: 4, ceiling: 7,
     snakes: [
       { cells: [[1, 3], [0, 3]] },
       { cells: [[3, 1], [3, 2], [3, 3]] },
@@ -346,7 +347,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Прицел", lesson: "Хвост — это обед. Голова или тело на пути — авария.",
-    w: 5, h: 4, target: 7,
+    w: 5, h: 4, ceiling: 7,
     snakes: [
       { cells: [[2, 1], [2, 2], [2, 3]] },
       { cells: [[1, 3], [0, 3]] },
@@ -356,7 +357,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Переезд", lesson: "Змея ест издалека — и переезжает сама. Её хвост окажется в новом месте.",
-    w: 7, h: 6, target: 8,
+    w: 7, h: 6, ceiling: 8,
     snakes: [
       { cells: [[3, 3], [2, 3], [1, 3], [0, 3]] },
       { cells: [[6, 2], [6, 3]] },
@@ -366,7 +367,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Затор", lesson: "Некого есть? Выпусти змею с поля — дорога откроется.",
-    w: 7, h: 5, target: 6,
+    w: 7, h: 5, ceiling: 6,
     snakes: [
       { cells: [[3, 0], [3, 1], [3, 2], [3, 3], [3, 4]] },
       { cells: [[1, 2], [0, 2]] },
@@ -376,7 +377,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Тесный угол", lesson: "Далёкий обед уводит тело целиком — и строка освобождается.",
-    w: 7, h: 6, target: 8,
+    w: 7, h: 6, ceiling: 10,
     snakes: [
       { cells: [[3, 3], [3, 4], [3, 5]] },
       { cells: [[4, 0], [3, 0]] },
@@ -386,7 +387,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Цепочка", lesson: "Цепочка тянется через всё поле. Вопрос — с какого звена начать.",
-    w: 7, h: 6, target: 9,
+    w: 7, h: 6, ceiling: 12,
     snakes: [
       { cells: [[1, 2], [1, 3]] },
       { cells: [[2, 0], [1, 0]] },
@@ -397,7 +398,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Уведи хвост", lesson: "Свой хвост можно убрать с чужого луча. Тогда луч найдёт добычу покрупнее.",
-    w: 7, h: 5, target: 8,
+    w: 7, h: 5, ceiling: 8,
     snakes: [
       { cells: [[1, 0], [0, 0]] },
       { cells: [[2, 2], [2, 1], [2, 0]] },
@@ -407,7 +408,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Два переезда", lesson: "Две стены. Одна уедет совсем, вторая подставит хвост. Порядок любой.",
-    w: 7, h: 7, target: 7,
+    w: 7, h: 7, ceiling: 7,
     snakes: [
       { cells: [[1, 2], [0, 2]] },
       { cells: [[3, 3], [3, 2], [3, 1]] },
@@ -418,7 +419,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Кольцо", lesson: "Всё поле — одно кольцо. Собери его в одну змею и не разорви пополам.",
-    w: 7, h: 7, target: 14,
+    w: 7, h: 7, ceiling: 14,
     snakes: [
       { cells: [[1, 0], [0, 0]] },
       { cells: [[4, 0], [3, 0]] },
@@ -429,8 +430,8 @@ const RAW_LEVELS_VOID = [
     ],
   },
   {
-    name: "Балласт", lesson: "Цель меньше поля: одна змея лишняя. Отпусти её — дорога откроется.",
-    w: 7, h: 7, target: 29,
+    name: "Балласт", lesson: "Поле больше потолка: одна змея лишняя. Отпусти её — дорога откроется.",
+    w: 7, h: 7, ceiling: 29,
     snakes: [
       { cells: [[1, 1], [2, 1], [2, 0]] },
       { cells: [[6, 2], [5, 2], [5, 1]] },
@@ -442,7 +443,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Пошлина", lesson: "За проход платят длиной. Кем платить — решай сам, путей несколько.",
-    w: 8, h: 8, target: 40,
+    w: 8, h: 8, ceiling: 40,
     snakes: [
       { cells: [[4, 3], [5, 3], [5, 2]] },
       { cells: [[1, 7], [0, 7], [0, 6], [1, 6], [2, 6], [2, 5], [2, 4]] },
@@ -455,7 +456,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Отступные", lesson: "Двух змей придётся отпустить. Смотри на запас в шапке.",
-    w: 8, h: 9, target: 41,
+    w: 8, h: 9, ceiling: 41,
     snakes: [
       { cells: [[5, 3], [5, 4], [4, 4], [4, 5]] },
       { cells: [[7, 5], [7, 6], [6, 6]] },
@@ -470,7 +471,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Долгий счёт", lesson: "Десять змей и две жертвы. Посчитай запас, прежде чем тапать.",
-    w: 9, h: 9, target: 54,
+    w: 9, h: 9, ceiling: 54,
     snakes: [
       { cells: [[2, 5], [1, 5], [1, 4], [0, 4], [0, 5], [0, 6]] },
       { cells: [[4, 0], [3, 0], [2, 0]] },
@@ -486,7 +487,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Обвал", lesson: "Одиннадцать змей должны стать одной. Веди одну цепь и не начинай вторую.",
-    w: 9, h: 11, target: 62,
+    w: 9, h: 11, ceiling: 62,
     snakes: [
       { cells: [[6, 6], [6, 5], [5, 5]] },
       { cells: [[6, 8], [6, 7]] },
@@ -503,7 +504,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Колодец", lesson: "Тупик близко: сначала прикинь весь путь, потом тапай.",
-    w: 8, h: 10, target: 58,
+    w: 8, h: 10, ceiling: 58,
     snakes: [
       { cells: [[5, 1], [4, 1], [4, 0], [3, 0]] },
       { cells: [[5, 3], [5, 2], [4, 2], [4, 3], [3, 3], [3, 4], [4, 4], [4, 5]] },
@@ -519,7 +520,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Простор", lesson: "Места много, и дорог тоже. Веди одну змею — какой дорогой, решай сам.",
-    w: 10, h: 14, target: 92,
+    w: 10, h: 14, ceiling: 92,
     snakes: [
       { cells: [[4, 10], [3, 10], [3, 9], [4, 9], [4, 8], [5, 8], [5, 7], [4, 7], [4, 6], [5, 6], [6, 6], [6, 5], [5, 5]] },
       { cells: [[4, 5], [3, 5], [3, 6], [3, 7], [3, 8], [2, 8], [1, 8], [1, 7], [2, 7], [2, 6], [1, 6], [0, 6]] },
@@ -537,7 +538,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Перекрёсток", lesson: "Начать можно с любой змеи. А вот свернуть не туда — тупик.",
-    w: 10, h: 12, target: 81,
+    w: 10, h: 12, ceiling: 81,
     snakes: [
       { cells: [[7, 7], [8, 7], [8, 6], [9, 6]] },
       { cells: [[9, 7], [9, 8]] },
@@ -555,7 +556,7 @@ const RAW_LEVELS_VOID = [
   },
   {
     name: "Пустошь", lesson: "Самая длинная цепь в игре. Считай наперёд, пустоты помогут переехать.",
-    w: 10, h: 14, target: 92,
+    w: 10, h: 14, ceiling: 92,
     snakes: [
       { cells: [[4, 0], [5, 0]] },
       { cells: [[7, 12], [7, 13], [8, 13], [8, 12]] },
@@ -573,108 +574,6 @@ const RAW_LEVELS_VOID = [
   },
 ];
 
-
-/* ---------- режим рекорда ----------
-   Поле без цели: играешь, пока есть кого есть, счёт — самая длинная змея за партию.
-   Поле нарезано из одного пути с зазорами, поэтому цепь «съесть всё» существует
-   по построению (ceiling проверяется симуляцией в records.mjs), но каждая еда через
-   зазор утаскивает хвост едока и рвёт чужие прицелы — порядок решает.
-   Случайная игра берёт медианой 36 из 140, лучшая известная линия — все 140 за 28 ходов. */
-const RAW_FIELDS = [
-  {
-    name: "Большая пустошь",
-    lesson: "Цели нет — расти, пока есть кого есть. Счёт — самая длинная змея за партию.",
-    w: 12, h: 16, ceiling: 140, proof: "chain", mass: 140, marks: [60, 95, 125],
-    snakes: [
-      { cells: [[5, 14], [4, 14], [3, 14]] },
-      { cells: [[2, 14], [1, 14], [1, 13], [0, 13], [0, 14], [0, 15]] },
-      { cells: [[2, 15], [3, 15]] },
-      { cells: [[4, 15], [5, 15], [6, 15], [6, 14], [7, 14], [7, 15]] },
-      { cells: [[9, 15], [10, 15], [11, 15], [11, 14], [11, 13], [11, 12], [11, 11]] },
-      { cells: [[11, 10], [11, 9], [11, 8], [10, 8]] },
-      { cells: [[10, 10], [10, 11], [9, 11], [9, 10], [8, 10], [8, 11], [8, 12]] },
-      { cells: [[5, 12], [4, 12], [4, 13]] },
-      { cells: [[3, 13], [2, 13], [2, 12], [3, 12], [3, 11], [4, 11]] },
-      { cells: [[4, 10], [4, 9], [5, 9], [5, 8], [6, 8]] },
-      { cells: [[6, 9], [6, 10], [5, 10], [5, 11], [6, 11], [7, 11]] },
-      { cells: [[7, 9], [7, 8], [8, 8], [8, 9], [9, 9]] },
-      { cells: [[9, 8], [9, 7]] },
-      { cells: [[7, 7], [6, 7], [5, 7], [5, 6]] },
-      { cells: [[6, 6], [7, 6], [7, 5], [8, 5], [8, 6]] },
-      { cells: [[9, 6], [10, 6], [10, 7], [11, 7], [11, 6], [11, 5]] },
-      { cells: [[10, 5], [9, 5], [9, 4], [9, 3], [9, 2], [9, 1], [10, 1]] },
-      { cells: [[10, 2], [10, 3], [10, 4], [11, 4], [11, 3]] },
-      { cells: [[11, 2], [11, 1], [11, 0]] },
-      { cells: [[9, 0], [8, 0]] },
-      { cells: [[8, 2], [8, 3], [8, 4]] },
-      { cells: [[7, 4], [6, 4], [6, 5], [5, 5]] },
-      { cells: [[5, 4], [5, 3], [6, 3], [7, 3], [7, 2], [6, 2]] },
-      { cells: [[5, 2], [4, 2], [4, 1], [5, 1], [6, 1], [7, 1], [7, 0]] },
-      { cells: [[5, 0], [4, 0], [3, 0], [2, 0], [1, 0], [0, 0], [0, 1]] },
-      { cells: [[2, 1], [3, 1], [3, 2]] },
-      { cells: [[2, 2], [1, 2], [0, 2], [0, 3], [1, 3], [1, 4], [0, 4]] },
-      { cells: [[0, 6], [0, 7]] },
-      { cells: [[1, 7], [2, 7], [3, 7], [3, 6], [2, 6], [1, 6], [1, 5]] },
-    ],
-  },  {
-    name: "Разлёт",
-    lesson: "Пустоты между змеями — рабочее пространство: почти каждый обед здесь дальний выстрел.",
-    w: 12, h: 16, ceiling: 58, proof: "beam", mass: 98, marks: [30, 45, 58],
-    snakes: [
-      { cells: [[1, 14], [1, 15], [0, 15], [0, 14]] },
-      { cells: [[0, 8], [0, 7], [0, 6]] },
-      { cells: [[4, 10], [3, 10], [3, 9], [3, 8], [2, 8]] },
-      { cells: [[0, 5], [1, 5]] },
-      { cells: [[0, 4], [0, 3], [1, 3], [1, 4], [2, 4]] },
-      { cells: [[2, 2], [2, 3]] },
-      { cells: [[0, 1], [0, 0], [1, 0], [1, 1], [2, 1], [2, 0], [3, 0]] },
-      { cells: [[3, 2], [3, 3], [3, 4], [4, 4], [4, 3]] },
-      { cells: [[4, 1], [4, 0], [5, 0], [6, 0], [7, 0], [7, 1]] },
-      { cells: [[6, 1], [5, 1], [5, 2]] },
-      { cells: [[7, 4], [8, 4], [8, 3], [8, 2], [8, 1], [8, 0]] },
-      { cells: [[10, 0], [11, 0], [11, 1], [10, 1], [9, 1], [9, 2]] },
-      { cells: [[11, 9], [11, 10], [11, 11], [10, 11], [10, 10], [9, 10]] },
-      { cells: [[8, 12], [8, 13], [9, 13], [10, 13], [10, 14]] },
-      { cells: [[6, 6], [6, 7], [5, 7], [5, 6], [4, 6], [4, 5], [5, 5], [6, 5]] },
-      { cells: [[7, 6], [8, 6], [9, 6]] },
-      { cells: [[9, 7], [9, 8], [8, 8], [8, 7], [7, 7]] },
-      { cells: [[5, 8], [6, 8], [6, 9], [7, 9], [7, 8]] },
-      { cells: [[7, 10], [6, 10], [5, 10], [5, 9]] },
-      { cells: [[6, 13], [6, 12], [6, 11], [5, 11]] },
-      { cells: [[5, 13], [5, 12]] },
-      { cells: [[3, 11], [2, 11]] },
-    ],
-  },
-  {
-    name: "Порознь",
-    lesson: "Змеи стоят врозь. Кто ест только соседа под носом, соберёт 12 из 66.",
-    w: 12, h: 16, ceiling: 66, proof: "beam", mass: 92, marks: [32, 48, 60],
-    snakes: [
-      { cells: [[2, 10], [2, 9], [2, 8], [1, 8], [1, 7]] },
-      { cells: [[1, 12], [0, 12], [0, 13]] },
-      { cells: [[0, 14], [0, 15], [1, 15]] },
-      { cells: [[10, 15], [11, 15], [11, 14]] },
-      { cells: [[9, 14], [8, 14], [7, 14], [6, 14], [5, 14]] },
-      { cells: [[5, 11], [5, 10], [4, 10], [4, 9], [5, 9], [6, 9]] },
-      { cells: [[6, 12], [6, 13], [7, 13], [8, 13], [9, 13]] },
-      { cells: [[11, 12], [11, 13], [10, 13]] },
-      { cells: [[9, 11], [10, 11], [11, 11], [11, 10], [10, 10], [9, 10]] },
-      { cells: [[9, 9], [8, 9], [7, 9], [7, 10], [8, 10]] },
-      { cells: [[10, 7], [11, 7], [11, 6], [10, 6]] },
-      { cells: [[9, 5], [8, 5], [8, 6], [9, 6]] },
-      { cells: [[10, 5], [11, 5], [11, 4]] },
-      { cells: [[6, 6], [7, 6], [7, 5]] },
-      { cells: [[6, 5], [6, 4], [5, 4], [5, 3], [6, 3], [7, 3]] },
-      { cells: [[10, 3], [11, 3], [11, 2], [10, 2], [9, 2], [9, 1]] },
-      { cells: [[10, 1], [11, 1], [11, 0], [10, 0], [9, 0], [8, 0]] },
-      { cells: [[8, 2], [8, 1]] },
-      { cells: [[3, 0], [2, 0], [2, 1], [1, 1], [1, 0], [0, 0]] },
-      { cells: [[0, 1], [0, 2], [1, 2], [2, 2], [2, 3]] },
-      { cells: [[2, 5], [2, 6], [1, 6]] },
-    ],
-  },
-
-];
 
 // Цвета раздаём по кругу, но соседям (клетки бок о бок) один цвет не даём:
 // на больших полях две однотонные змеи впритык читаются как одна.
@@ -704,13 +603,16 @@ const paintPack = (lv) => {
   return colors;
 };
 
-const buildPack = (raw, mode) =>
+const buildPack = (raw) =>
   raw.map((lv, i) => {
     const colors = paintPack(lv);
+    const marks = marksOf(lv.ceiling, Math.max(...lv.snakes.map((sn) => sn.cells.length)));
     return {
       ...lv,
       id: i,
-      mode: mode || "goal",
+      mode: "goal",
+      marks,
+      target: marks[0],
       rocks: lv.rocks || [],
       bridges: lv.bridges || [],
       turns: lv.turns || [],
@@ -776,7 +678,7 @@ function acceptCrafted(name, r, ordinal, cfg) {
     if (got.broken || got.len < 2) return null;
     return { ...base, mode: "record", ceiling: got.len, proof: "beam", mass: m.mass,
       plan: plan.map((st) => st.sid),
-      marks: [Math.round(got.len * 0.5), Math.round(got.len * 0.75), got.len],
+      marks: marksOf(got.len, Math.max(...snakes.map((sn) => sn.cells.length))),
       lesson: `${m.snakes} змей · ${клеток(m.mass)} · игра собирает ${got.len} за ${ходов(got.steps)}` };
   }
   const target = lv.len;
@@ -790,16 +692,19 @@ function acceptCrafted(name, r, ordinal, cfg) {
   const got = walkSids({ w: lv.w, h: lv.h }, withIds(snakes), sids, boardOf(lv));
   if (got.bad || got.len < target) return null;
   const plan = got.steps;
-  const marks = [];
-  if (snakes.some((s) => s.apple)) marks.push("яблоко даёт +1");
-  if (snakes.some((s) => s.spiky)) marks.push("колючую не съесть");
-  if (snakes.some((s) => s.sleep && !s.apple)) marks.push("спящая не ходит");
-  if ((base.bridges || []).length) marks.push("над мостом луч проходит");
-  if ((base.turns || []).length) marks.push("поворот загибает луч");
-  if ((base.portals || []).length) marks.push("портал уносит луч");
-  return { ...base, mode: "goal", target, plan: sids,
-    lesson: `Цель ${target} за ${ходов(plan.length)} · решений ${m.sols} · безопасных тапов ${Math.round(100 * m.safety)}%`
-      + (marks.length ? " · " + marks.join(", ") : "") };
+  const мех = [];
+  if (snakes.some((s) => s.apple)) мех.push("яблоко даёт +1");
+  if (snakes.some((s) => s.spiky)) мех.push("колючую не съесть");
+  if (snakes.some((s) => s.sleep && !s.apple)) мех.push("спящая не ходит");
+  if ((base.bridges || []).length) мех.push("над мостом луч проходит");
+  if ((base.turns || []).length) мех.push("поворот загибает луч");
+  if ((base.portals || []).length) мех.push("портал уносит луч");
+  // Верхняя отметка — длина задуманного плана: она достижима ПО ПОСТРОЕНИЮ, и это
+  // только что подтвердил walkSids кодом самой игры. Отметки ниже считает marksOf.
+  const marks = marksOf(target, Math.max(...snakes.map((sn) => sn.cells.length)));
+  return { ...base, mode: "goal", ceiling: target, marks, target: marks[0], plan: sids,
+    lesson: `Отметки ${marks.join(" · ")} за ${ходов(plan.length)} · решений ${m.sols} · безопасных тапов ${Math.round(100 * m.safety)}%`
+      + (мех.length ? " · " + мех.join(", ") : "") };
 }
 
 // значения ручек в порядке, который понимает код обмена
@@ -813,8 +718,13 @@ const knobsOf = (c) => {
 const craftedToLevel = (c, i) => {
   const raw = { ...c, rocks: [], bridges: c.bridges || [], turns: c.turns || [], portals: c.portals || [] };
   const colors = paintPack(raw);
+  // В копилке лежат уровни, собранные прошлыми версиями: у них есть только цель.
+  // Достраиваем отметки, иначе такой уровень уронит экран на level.marks.
+  const ceiling = c.ceiling || c.target;
+  const marks = c.marks || marksOf(ceiling, Math.max(...c.snakes.map((sn) => sn.cells.length)));
   return { ...raw, id: i, rocks: [], bridges: c.bridges || [], turns: c.turns || [],
     portals: c.portals || [], plan: c.plan || null,
+    ceiling, marks, target: c.mode === "record" ? undefined : marks[0],
     snakes: c.snakes.map((sn, si) =>
       ({ id: "s" + si, color: colors[si], spiky: !!sn.spiky, sleep: !!sn.sleep || !!sn.apple,
          apple: !!sn.apple, cells: sn.cells })) };
@@ -822,7 +732,7 @@ const craftedToLevel = (c, i) => {
 
 const craftedToText = (c) => `  {
     name: ${JSON.stringify(c.name)}, lesson: ${JSON.stringify(c.lesson)},
-    w: ${c.w}, h: ${c.h}, ${c.bridges && c.bridges.length ? `bridges: [${c.bridges.map(([x, y]) => `[${x}, ${y}]`).join(", ")}], ` : ""}${c.turns && c.turns.length ? `turns: [${c.turns.map(([x, y, a, b]) => `[${x}, ${y}, "${a}", "${b}"]`).join(", ")}], ` : ""}${c.portals && c.portals.length ? `portals: [${c.portals.map((p) => `[${p.join(", ")}]`).join(", ")}], ` : ""}${c.mode === "record" ? `ceiling: ${c.ceiling}, proof: "beam", mass: ${c.mass}, marks: ${JSON.stringify(c.marks)}` : `target: ${c.target}`},
+    w: ${c.w}, h: ${c.h}, ${c.bridges && c.bridges.length ? `bridges: [${c.bridges.map(([x, y]) => `[${x}, ${y}]`).join(", ")}], ` : ""}${c.turns && c.turns.length ? `turns: [${c.turns.map(([x, y, a, b]) => `[${x}, ${y}, "${a}", "${b}"]`).join(", ")}], ` : ""}${c.portals && c.portals.length ? `portals: [${c.portals.map((p) => `[${p.join(", ")}]`).join(", ")}], ` : ""}${c.mode === "record" ? `ceiling: ${c.ceiling}, proof: "beam", mass: ${c.mass}, marks: ${JSON.stringify(c.marks)}` : `ceiling: ${c.ceiling}`},
     plan: ${JSON.stringify(c.plan || [])},
     snakes: [
 ${c.snakes.map((sn) => "      { " + (sn.spiky ? "spiky: true, " : "") + (sn.apple ? "apple: true, " : "") + (sn.sleep && !sn.apple ? "sleep: true, " : "") +
@@ -832,7 +742,6 @@ ${c.snakes.map((sn) => "      { " + (sn.spiky ? "spiky: true, " : "") + (sn.appl
 
 const PACKS = [
   { id: "void", name: "Пустота", note: "19 уровней · только змеи", levels: buildPack(RAW_LEVELS_VOID) },
-  { id: "record", name: "Рекорд", note: "3 поля 12×16 · без цели, на счёт", levels: buildPack(RAW_FIELDS, "record") },
   { id: "classic", name: "Кампания", note: "25 уровней · валуны и колючие", levels: buildPack(RAW_LEVELS) },
 ];
 
@@ -948,7 +857,9 @@ function legalMoves(snakes, W, H, board) {
   return out;
 }
 
-// Кратчайшая победа. Бюджет узлов общий на все глубины: если позиция безнадёжна,
+// Кратчайший путь к ПОТОЛКУ поля — к верхней отметке, а не к первой звезде:
+// подсказка, бросающая игрока на одной звезде, обрывает игру там, где она начинается.
+// Бюджет узлов общий на все глубины: если позиция безнадёжна,
 // перебор не имеет права подвесить вкладку — вернём null и отдадим ход эвристике.
 /* out.exhausted — бюджет кончился, а не решения нет. Разница принципиальная:
    на «не нашёл» игроку нельзя говорить «нельзя», иначе интерфейс врёт и уровень
@@ -957,7 +868,7 @@ function planGoal(level, snakes, board, out) {
   const budget = { left: 150000 };
   let seq = null;
   const dfs = (sn, d, cap, path, seen) => {
-    if (maxLen(sn) >= level.target) { seq = path.slice(); return true; }
+    if (maxLen(sn) >= (level.ceiling || level.target)) { seq = path.slice(); return true; }
     if (d >= cap || budget.left <= 0) return false;
     const k = stateKey(sn) + "#" + d;
     if (seen.has(k)) return false;
@@ -1437,7 +1348,6 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     setShareOpen(false);
     onShare({ reason, played: log, lastTry: lastTryRef.current });
   };
-  const [launched, setLaunched] = useState(0);
   const [phase, setPhase] = useState("idle"); // idle | anim | crash | won | lost | done
   const [fx, setFx] = useState(null);
   const [toast, setToast] = useState(null);
@@ -1458,11 +1368,13 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
   useEffect(() => () => { cancelAnimationFrame(rafRef.current); clearTimeout(fxTimerRef.current); clearTimeout(crashTimerRef.current); }, []);
 
   const best = maxLen(snakes);
-  // Запас = сколько длины ещё можно потерять на выпусках. Показываем только там,
-  // где цель меньше суммы клеток, — на бюджетных уровнях без этого числа не сыграть.
+  // Отметка, которую игрок сейчас берёт, и запас до неё. Запас = сколько длины ещё
+  // можно потерять на выпусках, не потеряв эту звезду: обед массу сохраняет, теряет
+  // её только вылет. Без этого числа на бюджетных уровнях не сыграть.
   const onBoard = snakes.reduce((a, s) => a + s.cells.length, 0);
-  const hasBudget = !isRec && level.snakes.reduce((a, s) => a + s.cells.length, 0) > level.target;
-  const slack = onBoard - level.target;
+  const aim = isRec ? null : (level.marks.find((m) => m > best) || level.ceiling);
+  const hasBudget = !isRec && level.snakes.reduce((a, s) => a + s.cells.length, 0) > level.marks[0];
+  const slack = onBoard - aim;
   const idle = phase === "idle";
   const canEatAny = idle && snakes.some((s) => !s.sleep && raycast(snakes, s.id, level.w, level.h, board).kind === "tail");
   const canLaunchAny = idle && snakes.some((s) => !s.sleep && raycast(snakes, s.id, level.w, level.h, board).kind === "edge");
@@ -1485,41 +1397,42 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     }
     const ml = maxLen(mv.finalSnakes);
     if (ml > runBest) { setRunBest(ml); if (isRec && hintsRef.current === 0) onRecord(ml); }
-    /* Смерть по массе. Обед массу сохраняет, теряется она только на вылете, а цель
-       по построению не больше стартовой массы. Значит «клеток на поле меньше цели» —
-       ТОЧНЫЙ признак проигрыша за одно сложение, без перебора; он ловит главную
-       необратимую ошибку — лишний выпуск. Молчать тут нельзя: правило порога
-       (партия идёт, пока можно расти) само по себе позволяет расти вечно, ни разу
-       не дорастая до цели, — и игрок ходит по мёртвому уровню, не зная об этом. */
-    if (!isRec && mv.finalSnakes.reduce((a, s) => a + s.cells.length, 0) < level.target) {
+    /* Смерть по массе. Обед массу сохраняет, теряется она только на вылете, а нижняя
+       отметка по построению не больше стартовой массы. Значит «клеток на поле меньше
+       нижней отметки» — ТОЧНЫЙ признак проигрыша за одно сложение, без перебора; он
+       ловит главную необратимую ошибку — лишний выпуск. Молчать тут нельзя: правило
+       порога (партия идёт, пока можно расти) само по себе позволяет расти вечно, ни
+       разу не добравшись до отметки, — и игрок ходит по мёртвому уровню, не зная. */
+    if (!isRec && mv.finalSnakes.reduce((a, s) => a + s.cells.length, 0) < level.marks[0]) {
       clearTimeout(crashTimerRef.current);
-      setLostReason("Улетело слишком много: на поле осталось меньше клеток, чем нужно на цель.");
+      setLostReason("Улетело слишком много: на поле осталось меньше клеток, чем нужно даже на первую отметку.");
       setPhase("lost");
       return;
     }
-    // Цель — порог, а не финиш: пока змея может расти, партия продолжается.
+    // Нижняя отметка — порог, а не финиш: пока змея может расти, партия идёт,
+    // и каждый лишний обед — это шаг к следующей звезде.
     const anyEat = mv.finalSnakes.some((s) => !s.sleep && raycast(mv.finalSnakes, s.id, level.w, level.h, board).kind === "tail");
     if (!anyEat && !canGrow(level, mv.finalSnakes, board, ml)) {
-      finish(mv.finalSnakes, ml, mv.launchedAfter);
+      finish(mv.finalSnakes, ml);
       return;
     }
     setPhase("idle");
   }
 
   /* Конец партии — либо рост доказуемо невозможен, либо игрок забрал результат сам.
-     Раньше уровень закрывался в тот миг, когда длина пересекала цель, и добрать
-     остаток поля было нельзя: третья звезда «съедено всё» оказывалась недостижимой
-     на 8 уровнях кампании из 14. */
-  function finish(fin, ml, launchedAfter) {
+     Уровень не закрывается в тот миг, когда длина пересекает нижнюю отметку: доска
+     дальше и есть игра, следующая отметка берётся ровно тем, что ты доедаешь поле.
+     Звёзды считаются по ДЛИНЕ в конце партии — по тому, докуда доросла змея. */
+  function finish(fin, ml) {
     clearTimeout(crashTimerRef.current);
     if (isRec) { setPhase("done"); return; }
-    if (ml >= level.target) {
-      const stars = 1 + (launchedAfter === 0 ? 1 : 0) + (fin.length === 1 ? 1 : 0);
-      setWonInfo({ len: ml, stars, ateAll: fin.length === 1 });
+    const stars = level.marks.filter((m) => ml >= m).length;
+    if (stars > 0) {
+      setWonInfo({ len: ml, stars, next: level.marks.find((m) => ml < m) || null });
       setPhase("won");
       onWin(stars);
     } else {
-      setLostReason("Съесть больше некого — до цели змея уже не дорастёт.");
+      setLostReason("Съесть больше некого — змея не дотянула даже до первой отметки.");
       setPhase("lost");
     }
   }
@@ -1636,14 +1549,12 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     const Nom = nom.charAt(0).toUpperCase() + nom.slice(1);
     if (ray.kind === "tail") {
       const mv = buildEatMove(snakes, sid, ray);
-      mv.launchedAfter = launched;
-      setHistory((hh) => [...hh, { snakes: clone(snakes), launched, runBest }]);
+      setHistory((hh) => [...hh, { snakes: clone(snakes), runBest }]);
       setLog((l) => [...l, sid]);
       runMove(mv);
     } else if (ray.kind === "edge") {
       const mv = buildLaunchMove(snakes, sid, ray);
-      mv.launchedAfter = launched + 1;
-      setHistory((hh) => [...hh, { snakes: clone(snakes), launched, runBest }]);
+      setHistory((hh) => [...hh, { snakes: clone(snakes), runBest }]);
       setLog((l) => [...l, sid]);
       setLaunched((n) => n + 1);
       runMove(mv);
@@ -1687,7 +1598,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     let sid = made().get(k);
     if (sid == null) sid = planRef.current.get(k);
     if (sid == null) {
-      const goal = !isRec && best < level.target;
+      const goal = !isRec && best < level.ceiling;
       const out = {};
       const plan = goal
         ? (planGoal(level, snakes, board, out) || planLongest(level, snakes, board))
@@ -1697,7 +1608,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
           ? "Больше не вырасти — партию можно заканчивать."
           : out.exhausted
             ? "Ты ушёл от задуманного пути, и отсюда решения я не вижу. Отмени ход."
-            : "Отсюда цели уже не достичь. Отмени ход или начни заново.");
+            : "Отсюда до потолка уже не дорасти. Отмени ход или начни заново.");
         return;
       }
       planRef.current = new Map(plan.map((st) => [st.k, st.sid]));
@@ -1716,7 +1627,6 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     setHistory((hh) => hh.slice(0, -1));
     setLog((l) => l.slice(0, -1));
     setSnakes(last.snakes);
-    setLaunched(last.launched);
     setRunBest(last.runBest != null ? last.runBest : maxLen(last.snakes));
     setPhase("idle"); setWonInfo(null); setLostReason(null);
     setFx(null); setToast(null); setPlus(null);
@@ -1725,13 +1635,14 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
   function restart() {
     if (phase === "anim") return;
     clearTimeout(crashTimerRef.current);
-    setSnakes(clone(level.snakes)); setHistory([]); setLog([]); setLaunched(0); setRunBest(maxLen(level.snakes));
+    setSnakes(clone(level.snakes)); setHistory([]); setLog([]); setRunBest(maxLen(level.snakes));
     hintsRef.current = 0; setHints(0); planRef.current = new Map();
     setPhase("idle"); setWonInfo(null); setLostReason(null); setCrashed(false);
     setFx(null); setToast(null); setPlus(null);
   }
 
-  const reached = !isRec && best >= level.target;
+  const taken = isRec ? 0 : level.marks.filter((m) => best >= m).length;
+  const reached = !isRec && taken > 0;
   const stuckMsg =
     idle && !canEatAny && canLaunchAny
       ? "Съесть некого. Выпусти змею, чтобы расчистить путь, или закончи партию."
@@ -1780,17 +1691,20 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
         </div>
       ) : (
         <div className="hv-goalrow">
-          <span className="hv-goal">Цель ≥ {level.target}</span>
-          <div className="hv-bar" role="progressbar" aria-valuenow={best} aria-valuemax={level.target}>
-            <div className="hv-fill" style={{ width: Math.min(100, (best / level.target) * 100) + "%" }} />
+          <span className="hv-goal">Длина</span>
+          <div className="hv-bar" role="progressbar" aria-valuenow={best} aria-valuemax={level.ceiling}>
+            <div className="hv-fill" style={{ width: Math.min(100, (best / level.ceiling) * 100) + "%" }} />
+            {level.marks.map((m) => (
+              <i key={m} className={"hv-mark" + (best >= m ? " hit" : "")} style={{ left: (m / level.ceiling) * 100 + "%" }} />
+            ))}
           </div>
-          <span className="hv-count">{best} / {level.target}</span>
+          <span className="hv-count">{best} / {level.ceiling}</span>
         </div>
       )}
 
       {hasBudget ? (
         <div className={"hv-slack" + (slack <= 0 ? " tight" : "")}>
-          Запас: <b>{Math.max(0, slack)}</b>{slack > 0 ? " — столько длины ещё можно отпустить" : " — больше терять нечего"}
+          Запас: <b>{Math.max(0, slack)}</b>{slack > 0 ? " — столько можно отпустить, не потеряв звезду" : " — больше терять нечего"}
         </div>
       ) : null}
 
@@ -1843,8 +1757,9 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
               </div>
               <div className="hv-wontitle">Уровень пройден</div>
               <div className="hv-wonsub">
-                Длина змеи: {wonInfo.len}{wonInfo.len > level.target ? " — цель " + level.target + " перебита на " + (wonInfo.len - level.target) : ""}
-                {wonInfo.ateAll ? " · съедено всё поле" : ""}
+                Длина змеи: {wonInfo.len} из {level.ceiling}
+                {wonInfo.next ? " · до следующей отметки не хватило " + (wonInfo.next - wonInfo.len)
+                  : " — это потолок поля, больше тут не вырасти"}
               </div>
               <div className="hv-btnrow">
                 <button className="hv-btn ghost good" onClick={() => send(0)}><Star size={14} /> Нравится</button>
@@ -1931,12 +1846,13 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
         ) : stuckMsg ? (
           <div className="hv-toast warn">
             {stuckMsg}
-            <button className="hv-endbtn" onClick={() => finish(snakes, best, launched)}>Закончить</button>
+            <button className="hv-endbtn" onClick={() => finish(snakes, best)}>Закончить</button>
           </div>
         ) : reached && idle ? (
           <div className="hv-toast good">
-            Цель взята: {best}. Добирай остаток поля — или забирай сейчас.
-            <button className="hv-endbtn" onClick={() => finish(snakes, best, launched)}>Забрать</button>
+            {taken === 3 ? "Потолок поля взят: " + best + ". Три звезды твои."
+              : "Отметок взято: " + taken + " из 3. До следующей — " + (aim - best) + "."}
+            <button className="hv-endbtn" onClick={() => finish(snakes, best)}>Забрать</button>
           </div>
         ) : (
           <div className="hv-lesson">{level.lesson}</div>
@@ -1958,8 +1874,8 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
 const CRAFT_KNOBS = [
   { k: "w",      nom: "Ширина поля",    min: 5, max: 14 },
   { k: "h",      nom: "Высота поля",    min: 5, max: 18 },
-  { k: "len",    nom: "Цель (длина)",   min: 6, max: 70 },
-  /* После M разрезов на поле M+1 кусков, и суммарная длина всегда равна цели.
+  { k: "len",    nom: "Потолок (длина)", min: 6, max: 70 },
+  /* После M разрезов на поле M+1 кусков, и суммарная длина всегда равна потолку.
      Обычный кусок не короче двух клеток, а яблоко — ровно одна: len ≥ 2(M+1−A)+A,
      откуда M ≤ (len−2+A)/2. Каждое яблоко — это лишний ход, который поле выдержит. */
   { k: "moves",  nom: "Ходов в решении", min: 2,
@@ -2055,8 +1971,8 @@ function Stepper({ nom, value, min, max, onStep, hint, sub }) {
 function CraftModal({ base, cfg, onSet, onClose, onGo, onReset, busy, fail }) {
   const ceil = voidCeiling(cfg);
   const roomy = cfg.len <= cfg.w * cfg.h - 4;
-  const тесно = !roomy ? `цель ${cfg.len} не уместится на ${cfg.w}×${cfg.h}` : null;
-  // цель тянет за собой предел ходов, ходы — предел пустот: подрезаем следом,
+  const тесно = !roomy ? `потолок ${cfg.len} не уместится на ${cfg.w}×${cfg.h}` : null;
+  // потолок тянет за собой предел ходов, ходы — предел пустот: подрезаем следом,
   // иначе ползунок врёт о своей позиции, а генератор молча крутит невозможное
   const bounds = (c) => CRAFT_KNOBS.reduce((a, k) => {
     const hi = typeof k.max === "function" ? k.max(a) : k.max;
@@ -2208,7 +2124,7 @@ function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft
                 <span className="hv-lvmeta">
                   {lv.w}×{lv.h} · {lv.mode === "record"
                     ? lv.snakes.length + " змей · рекорд " + rec + (lv.proof === "beam" ? ", машина " : " из ") + lv.ceiling
-                    : "цель ≥ " + lv.target}{pack.craft ? " · " + lv.preset : ""}
+                    : "отметки " + lv.marks.join(" · ")}{pack.craft ? " · " + lv.preset : ""}
                 </span>
               </span>
               <span className="hv-lvstars">
