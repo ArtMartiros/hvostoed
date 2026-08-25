@@ -7,7 +7,12 @@ import { PRESETS, craftOnce } from './presets.mjs';
 const key = (st) => st.map((s) => s.cells.map((c) => c.join('.')).join(';')).sort().join('|');
 
 function audit(lv, target) {
-  const start = lv.snakes.map((s, i) => ({ tag: i, cells: s.cells }));
+  /* Состояние — ЧЕРЕЗ stateOf и с доской, а не своей сборкой. Своя теряла spiky и
+     sleep, и аудит шёл по полю, где колючий хвост съедобен, спящая ходит, а мостов,
+     поворотов и порталов нет вовсе. С яблоками (змея в одну клетку) эта потеря
+     перестала быть тихой: у клетки нет направления взгляда, и facing падал. */
+  const br = G.boardOf(lv);
+  const start = G.stateOf(lv).map((s, i) => ({ ...s, tag: i }));
   const decoyTags = new Set(lv.snakes.map((s, i) => (s.decoy ? i : -1)).filter((x) => x >= 0));
 
   // достижимость победы — для «сколько ходов на развилке ведут в тупик»
@@ -16,7 +21,7 @@ function audit(lv, target) {
     if (G.maxLen(st) >= target) return true;
     const k = key(st); if (memo.has(k)) return memo.get(k);
     let r = false;
-    for (const m of G.movesOf(st, lv.w, lv.h)) {
+    for (const m of G.movesOf(st, lv.w, lv.h, br)) {
       if (win(m.eat ? G.applyEat(st, m.i, m.ray) : st.filter((_, i) => i !== m.i))) { r = true; break; }
     }
     memo.set(k, r); return r;
@@ -25,13 +30,13 @@ function audit(lv, target) {
   // 1. вынужденные ходы по задуманной линии
   let forced = 0, lineLen = 0;
   {
-    let st = lv.snakes.map((s) => ({ id: s.id, cells: s.cells }));
+    let st = G.stateOf(lv);
     for (const mv of lv.moves) {
-      const opts = G.movesOf(st, lv.w, lv.h);
+      const opts = G.movesOf(st, lv.w, lv.h, br);
       if (opts.length === 1) forced++;
       lineLen++;
       const i = st.findIndex((s) => s.id === mv.eater);
-      const r = G.raycast(st, i, lv.w, lv.h);
+      const r = G.raycast(st, i, lv.w, lv.h, br);
       if (r.kind !== 'tail') break;
       st = G.applyEat(st, i, r);
     }
@@ -47,7 +52,7 @@ function audit(lv, target) {
   while (stack.length && seen.size < 60000) {
     const st = stack.pop();
     if (G.maxLen(st) >= target) continue;
-    const mv = G.movesOf(st, lv.w, lv.h);
+    const mv = G.movesOf(st, lv.w, lv.h, br);
     for (const m of mv) {
       const nx = m.eat ? G.applyEat(st, m.i, m.ray) : st.filter((_, i) => i !== m.i);
       const alive = win(nx);
