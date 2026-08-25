@@ -20,10 +20,17 @@ const WANT = Number(process.argv[2] || 5);
    живёт в модалке и ничего не режет — но плотная доска тесту всё равно нужна.) */
 const CASES = Object.keys(PRESETS).filter((n) => !PRESETS[n].record).map((n) => [n, PRESETS[n]])
   .concat([['всё сразу', { ...PRESETS['пустоты'], mechs: 0, portals: 2, apples: 2,
-    bridges: 2, turns: 3, spiky: 1, sleepy: 2 }]]);
+    bridges: 2, turns: 3, spiky: 1, sleepy: 2 }]])
+  /* И отдельно — доска, где колючая не приманка, а та, что ест ПОСЛЕДНЕЙ. Колючих
+     больше, чем обманок, поэтому шипы победительнице генератор надевает не по монете,
+     а обязательно: значит каждый собранный здесь уровень проверяет именно этот случай.
+     Проверять его надо ровно так же, ходом игры: шипы на участнице решения — это
+     чужие лучи, упирающиеся в её хвост, и разойдись игра с генератором хоть на одном,
+     уровень встанет колом там, где план считал ход состоявшимся. */
+  .concat([['колючая ест последней', { ...PRESETS['средний'], decoys: 2, spiky: 3, sleepy: 1 }, true]]);
 
 let bad = 0;
-for (const [name, preset] of CASES) {
+for (const [name, preset, lead] of CASES) {
   let ok = 0, tried = 0;
   const fails = [];
   for (let seed = 1; seed <= 900 && ok < WANT; seed++) {
@@ -41,6 +48,9 @@ for (const [name, preset] of CASES) {
     const got = M.walkSids({ w: lv.w, h: lv.h }, snakes, sids, board);
     if (got.bad) { fails.push(`сид ${seed}: ${got.bad}`); continue; }
     if (got.len < lv.len) { fails.push(`сид ${seed}: длина ${got.len}/${lv.len}`); continue; }
+    // случай, ради которого случай и заведён: шипы носит участница решения
+    if (lead && !lv.snakes.find((s) => s.id === lv.moves[lv.moves.length - 1].eater).spiky) {
+      fails.push(`сид ${seed}: та, что ест последней, без шипов`); continue; }
     ok++;
   }
   if (fails.length || ok < WANT) bad++;

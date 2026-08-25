@@ -556,10 +556,71 @@ export function generate(cfg) {
     return [x, y, v[0], v[1]];
   });
 
-  // обычные обманки — первыми, чтобы приманки ставились уже с их учётом
+  /* Колючая — не только приманка. Её отличие от обычной змеи ровно одно: ХВОСТ
+     несъедобен. Значит шипы может носить и участница решения — но лишь та, до чьего
+     хвоста решение ни разу не дотягивается, а такая ровно одна: та, что ест
+     ПОСЛЕДНЕЙ. Все остальные куски по построению кем-то съедены, и шипы на них
+     порвали бы план (луч в хвост вернул бы spikyTail вместо tail).
+
+     Зачем это нужно: пометка на победительнице говорит игроку «эту не убрать, её
+     придётся кормить» — тот самый мотив, на котором в кампании держатся «Западня»
+     и «Обжора». И это не украшение задним числом: шипы меняют само пространство
+     решений, потому что закрывают тап, который без них был бы законным обедом.
+
+     Монета, а не правило: если бы оливковой всегда оказывалась победительница, цвет
+     выдавал бы ответ до первого тапа. Половина сборок отдаёт шипы приманкам,
+     половина — победительнице, и по доске эти два случая неразличимы. Отменяет
+     монету только нехватка приманок: если колючих заказано больше, чем влезет в
+     обманки, победительнице шипы нужны обязательно, иначе ручка останется недобранной. */
   const wantSpiky = cfg.spiky || 0;
+  const winner = moves.length ? moves[moves.length - 1].eater : null;
+  let spikyLeft = wantSpiky;
+  const watchers = [];                          // обманки, посаженные СМОТРЕТЬ в шипы
+  const forced = wantSpiky > Math.max(0, cfg.decoys - sleepLeft);
+  if (spikyLeft > 0 && winner != null && (forced || rnd() < 0.5)) {
+    const lv0 = { bridges, turns, portals };
+    /* Пометка обязана работать: шипы на змее, в чей хвост никто не смотрит, ведут
+       себя как обычное тело. Хвост победительницы по плану не ест никто — значит
+       смотреть в него должен кто-то посторонний. Сначала ищем такого среди уже
+       стоящих (это бесплатно), и только если его нет, сажаем наблюдателя.
+
+       Наблюдатель — обманка, и слот он занимает обманочный: пока в бюджете есть
+       место, он вычитается из обычных обманок, а когда места нет — становится
+       лишним, ровно как приманка, которой не хватило слота. Так уже устроен обмен
+       у помеченных обманок, и заводить здесь второе правило было бы враньём. */
+    const seen = tailSeen(state, moves, cfg, lv0, winner);
+    let ok = !!seen;
+    if (seen) for (const q of seen.path) forbidden.add(ck(q));   // подлёт не занимать
+    else for (const sp of shuffled(rnd, sightSpots(state, moves, cfg, forbidden, lv0, winner))) {
+      const block = new Set(forbidden);
+      for (const q of sp.path) block.add(ck(q));
+      const len = 2 + Math.floor(rnd() * (cfg.decoyMax || 4));
+      // голова — в клетку обзора, шея — прочь от хвоста: значит смотрит она в хвост
+      const d = walk(rnd, cfg.w, cfg.h, len, block, sp.c, sp.away, 0.4);
+      if (!d) continue;
+      /* Последнее слово — за ТЕМ ЖЕ лучом, что в игре. Обзор считался по чистому
+         полу, а на самой клетке хвоста пол чистым быть не обязан: там может лежать
+         мост (луч над хвостом пролетит) или плитка поворота, повёрнутая к лучу
+         спиной (авария вместо обеда). Замер на «среднем» и «просторе»: без этой
+         проверки каждая сороковая победительница выходила с краской вместо шипов. */
+      const cand = { id: cfg._nextId, cells: d, decoy: true, trap: true };
+      if (!tailSeen(state.concat([cand]), moves, cfg, lv0, winner)) continue;
+      cfg._nextId++;
+      watchers.push(cand);
+      for (const q of d) forbidden.add(ck(q));
+      for (const q of sp.path) forbidden.add(ck(q));
+      ok = true; break;
+    }
+    if (ok) {
+      state = state.concat(watchers);
+      state.find((s) => s.id === winner).spiky = true;
+      spikyLeft--;
+    }
+  }
+
+  // обычные обманки — первыми, чтобы приманки ставились уже с их учётом
   const decoys = [];
-  for (let t = 0; t < Math.max(0, cfg.decoys - wantSpiky - sleepLeft); t++) {
+  for (let t = 0; t < Math.max(0, cfg.decoys - spikyLeft - sleepLeft - watchers.length); t++) {
     const len = 2 + Math.floor(rnd() * (cfg.decoyMax || 4));
     const d = walk(rnd, cfg.w, cfg.h, len, forbidden, null, null, 0.4);
     if (!d) continue;
@@ -584,7 +645,6 @@ export function generate(cfg) {
   const spots = trapSpots(state, moves, cfg, forbidden, { bridges, turns, portals });
   const traps = [];
   const clear = new Set();                     // подлёт к уже поставленной приманке — не занимать
-  let spikyLeft = wantSpiky;
   for (const sp of shuffled(rnd, spots)) {
     if (spikyLeft <= 0 && sleepLeft <= 0) break;
     if (clear.has(ck(sp.c)) || sp.path.some((q) => clear.has(ck(q)))) continue;
@@ -605,8 +665,74 @@ export function generate(cfg) {
   return { w: cfg.w, h: cfg.h, snakes: state, moves, len: cfg.len, portals,
            mechs: MECHS.filter((k) => (cfg[k] || 0) > 0),
            apples: moves.filter((m) => m.apple).length,
-           decoys: decoys.length + traps.length + bridges.length, bridges, turns,
+           decoys: decoys.length + traps.length + bridges.length + watchers.length, bridges, turns,
            voids: moves.reduce((a, m) => a + m.gap, 0), want, peak: cfg.peak, breather: cfg.breather };
+}
+
+/* Доска на каждом шагу задуманного решения: до первого хода, после первого и так
+   далее. Одно место на всех, кто идёт по плану вперёд, — а таких уже трое. */
+function planStates(start, moves, cfg, lv) {
+  const br = boardOf(lv);
+  const out = [];
+  let state = start.map((s) => ({ ...s, cells: s.cells.map((c) => c.slice()) }));
+  for (let m = 0; ; m++) {
+    out.push(state);
+    if (m >= moves.length) break;
+    const i = state.findIndex((s) => s.id === moves[m].eater);
+    if (i < 0) break;
+    const r = raycast(state, i, cfg.w, cfg.h, br);
+    if (r.kind !== 'tail') break;
+    state = applyEat(state, i, r);
+  }
+  return out;
+}
+
+/* Смотрит ли кто-нибудь в ХВОСТ змеи id хоть на одном шагу решения — и каким лучом.
+   Ровно этим колючая отличается от обычной змеи, и ровно это меряет приёмка
+   (markUse): шипы, до которых ничей луч не достаёт, — краска. */
+function tailSeen(start, moves, cfg, lv, id) {
+  const br = boardOf(lv);
+  for (const state of planStates(start, moves, cfg, lv)) {
+    for (let i = 0; i < state.length; i++) {
+      if (state[i].sleep) continue;                     // спящая никуда не смотрит
+      const r = raycast(state, i, cfg.w, cfg.h, br);
+      if ((r.kind === 'tail' || r.kind === 'spikyTail') && state[r.prey].id === id) return r;
+    }
+  }
+  return null;
+}
+
+/* Клетки, ОТКУДА виден хвост змеи id по ходу решения, вместе с подлётом. Голова
+   обманки, посаженная в такую клетку, смотрит змее в хвост: если та колючая — тап
+   по обманке становится аварией, и шипы работают.
+
+   Подлёт пускаем только по клеткам, которых решение не касается НИКОГДА, — их и
+   держит запретный список. Это не осторожность, а точный факт о доске: плитки
+   поворотов и мосты лежат на клетках зазоров, порталы — на клетках финальной змеи,
+   то есть все они в том же списке. Значит клетка вне списка — чистый пол навсегда:
+   луч по такой линии не гнётся, не ныряет и не упирается раньше времени, а сам
+   наблюдатель не отнимет у решения ни клетки.
+
+   А вот КЛЕТКА ХВОСТА — чужая, решение на ней лежит, и пол под ней бывает любым:
+   мост, над которым луч пролетит, или спина поворота, о которую он разобьётся.
+   Поэтому здесь только кандидаты, а проверяет их настоящий raycast на месте. */
+function sightSpots(start, moves, cfg, forbidden, lv, id) {
+  const out = [], seen = new Set();
+  for (const state of planStates(start, moves, cfg, lv)) {
+    const tgt = state.find((s) => s.id === id);
+    if (!tgt) break;
+    const T = tgt.cells[tgt.cells.length - 1];
+    for (const d of DIRS) {
+      const path = [];                                  // клетки МЕЖДУ головой и хвостом
+      for (let c = add(T, d); inside(cfg.w, cfg.h, c) && !forbidden.has(ck(c)); c = add(c, d)) {
+        const k = ck(c) + sideName(d);
+        if (!seen.has(k)) { seen.add(k);
+          out.push({ c: c.slice(), away: d, path: path.map((q) => q.slice()) }); }
+        path.push(c.slice());
+      }
+    }
+  }
+  return out;
 }
 
 /* Клетки, куда чей-нибудь луч долетел бы по ходу решения. Хвост колючей,
@@ -615,9 +741,8 @@ export function generate(cfg) {
    взгляда, пока пусто, и собираем клетки, свободные от решения и его зазоров. */
 function trapSpots(start, moves, cfg, forbidden, lv) {
   const out = [], seen = new Set();
-  let state = start.map((s) => ({ id: s.id, cells: s.cells.map((c) => c.slice()), sleep: !!s.sleep }));
   const br = boardOf(lv);
-  for (let m = 0; m <= moves.length; m++) {
+  for (const state of planStates(start, moves, cfg, lv)) {
     const occ = occSet(state);
     for (const s of state) {
       if (s.cells.length < 2 || s.sleep) continue;      // спящая никуда не смотрит
@@ -638,12 +763,6 @@ function trapSpots(start, moves, cfg, forbidden, lv) {
         c = add(c, d);
       }
     }
-    if (m === moves.length) break;
-    const i = state.findIndex((s) => s.id === moves[m].eater);
-    if (i < 0) break;
-    const r = raycast(state, i, cfg.w, cfg.h, br);
-    if (r.kind !== 'tail') break;
-    state = applyEat(state, i, r);
   }
   return out;
 }
