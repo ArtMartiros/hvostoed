@@ -85,7 +85,28 @@ function audit(lv, target) {
   const preyOf = new Map();
   lv.moves.forEach((m) => preyOf.set(m.eater, (preyOf.get(m.eater) || 0) + 1));
   const maxChain = Math.max(0, ...preyOf.values());
+
+  /* 6. КАК ЛОЖАТСЯ ЗВЁЗДЫ у тупой игры. В приёмке стоит только потолок этой доли
+     (starTop) — а здесь смотрим всё распределение: если тупая игра ровно так же
+     часто берёт одну звезду, как три, шкала не различает игроков, и «отметки» —
+     краска. Игра здесь честнее, чем в shape: разрешены и вылеты, то есть массу
+     можно потерять, — а значит видно и нижний хвост распределения. */
+  const marks = G.marksOf(target, G.maxLen(G.stateOf(lv)));
+  const rnd = G.makeRng(lv.w * 131 + lv.h * 17 + target);
+  const hist = [0, 0, 0, 0];
+  for (let t = 0; t < 200; t++) {
+    let st = G.stateOf(lv);
+    for (let k = 0; k < 80; k++) {
+      const mv = G.movesOf(st, lv.w, lv.h, br);
+      if (!mv.length) break;
+      const m = mv[Math.floor(rnd() * mv.length)];
+      st = m.eat ? G.applyEat(st, m.i, m.ray) : st.filter((_, i) => i !== m.i);
+    }
+    hist[marks.filter((x) => G.maxLen(st) >= x).length]++;
+  }
   return {
+    stars: hist.map((h) => h / 200),
+    marks,
     eaters: eaters.size,
     maxChain,
     chainShare: lv.moves.length ? maxChain / lv.moves.length : 1,
@@ -113,7 +134,7 @@ const n = +(process.argv[3] || 8);
 const shots = +(process.argv[4] || 0);
 const p = PRESETS[which];
 console.log(`### ${which} — ${n} уровней\n`);
-console.log('  #  едоков  длиннейшая  вынужд  мёртвых  обманок  соблазн  верных\n              цепь      ходов    змей    живых            1-х ходов');
+console.log('  #  едоков  длиннейшая  вынужд  мёртвых  обманок  соблазн  верных    звёзды тупой игры\n              цепь      ходов    змей    живых            1-х ходов    0 / 1 / 2 / 3');
 const rows = [];
 let seed = 1000, made = 0;
 while (made < n && seed < 1000 + 600) {
@@ -123,10 +144,11 @@ while (made < n && seed < 1000 + 600) {
   const a = audit(r.level, target || r.metrics.ceiling);
   rows.push({ r, a });
   made++;
-  console.log(`  ${String(made).padStart(2)}  ${String(a.eaters).padStart(6)}  ${String(a.maxChain).padStart(6)} (${(100*a.chainShare).toFixed(0)}%)  ${(100*a.forcedShare).toFixed(0).padStart(5)}%  ${String(a.deadSnakes).padStart(6)}   ${String(a.decoysLive)}/${a.decoys}  ${(100*a.tempt).toFixed(0).padStart(6)}%  ${(String(Math.round(a.firstOk*a.firstAll))+' из '+a.firstAll).padStart(9)}`);
+  console.log(`  ${String(made).padStart(2)}  ${String(a.eaters).padStart(6)}  ${String(a.maxChain).padStart(6)} (${(100*a.chainShare).toFixed(0)}%)  ${(100*a.forcedShare).toFixed(0).padStart(5)}%  ${String(a.deadSnakes).padStart(6)}   ${String(a.decoysLive)}/${a.decoys}  ${(100*a.tempt).toFixed(0).padStart(6)}%  ${(String(Math.round(a.firstOk*a.firstAll))+' из '+a.firstAll).padStart(9)}    ${a.stars.map((x)=>(100*x).toFixed(0).padStart(3)+'%').join(' ')}`);
 }
 const avg = (f) => (rows.reduce((s, x) => s + f(x.a), 0) / rows.length);
 console.log(`\n  средние: едоков ${avg(a=>a.eaters).toFixed(1)}, длиннейшая цепь ${(100*avg(a=>a.chainShare)).toFixed(0)}% ходов, вынужденных ${(100*avg(a=>a.forcedShare)).toFixed(0)}%, мёртвых змей ${avg(a=>a.deadSnakes).toFixed(1)}, живых обманок ${(100*avg(a=>a.decoys?a.decoysLive/a.decoys:0)).toFixed(0)}%, соблазн ${(100*avg(a=>a.tempt)).toFixed(0)}%`);
+console.log(`  звёзды тупой игры в среднем: ${[0,1,2,3].map((i)=>i+'★ '+(100*avg(a=>a.stars[i])).toFixed(0)+'%').join(', ')}`);
 for (let i = 0; i < shots && i < rows.length; i++) {
   const { r, a } = rows[i];
   console.log(`\n--- ${which} #${i+1} (сид ${r.seed}) цель ${r.level.len} за ${r.level.moves.length}, вынужденных ${(100*a.forcedShare).toFixed(0)}%, мёртвых ${a.deadSnakes} ---`);

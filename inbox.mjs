@@ -5,10 +5,12 @@
    решается только тем движком, в который человек играл, а не его пересказом. */
 import fs from 'fs';
 import { decode, REASONS, CFG_KEYS } from './sharecode.mjs';
+import { marksOf } from './generator.mjs';   // формула отметок — одна на всех
 
 const src = fs.readFileSync('hvostoed.jsx', 'utf8');
 const logic = src.slice(src.indexOf('const SIDES = { n:'), src.indexOf('function buildEatMove'));
 const M = eval(logic + '\n({ raycast, applyEat, maxLen, stateKey, legalMoves, planGoal, planLongest, walkSids, ckey })');
+
 
 const boardOf = (lv) => ({
   rocks: new Set((lv.rocks || []).map(([x, y]) => M.ckey(x, y))),
@@ -22,9 +24,10 @@ const mass = (sn) => sn.reduce((a, s) => a + s.cells.length, 0);
 
 function report(rec, n) {
   const lv = rec.level, bd = boardOf(lv), goal = lv.mode !== 'record';
-  const target = goal ? lv.target : lv.ceiling;
+  const target = lv.ceiling;
+  const marks = goal ? marksOf(target, Math.max(...lv.snakes.map((s) => s.cells.length))) : (lv.marks || []);
   const start = mk(lv);
-  console.log(`\n${'═'.repeat(64)}\n#${n}  «${REASONS[rec.reason]}»  ${lv.w}×${lv.h}  ${goal ? 'цель ' + target : 'рекорд, потолок ' + target}`);
+  console.log(`\n${'═'.repeat(64)}\n#${n}  «${REASONS[rec.reason]}»  ${lv.w}×${lv.h}  ${goal ? 'отметки ' + marks.join(' · ') : 'рекорд, потолок ' + target}`);
   const mech = [];
   if ((lv.bridges || []).length) mech.push(`мостов ${lv.bridges.length}`);
   if ((lv.turns || []).length) mech.push(`поворотов ${lv.turns.length}`);
@@ -60,11 +63,11 @@ function report(rec, n) {
     const m = mass(sn), best = M.maxLen(sn);
     let mark = '';
     if (goal && dead === null) {
-      if (m < target) { dead = i; mark = ' ← ЗДЕСЬ ЦЕЛЬ СТАЛА НЕДОСТИЖИМА (клеток меньше цели)'; }
+      if (m < marks[0]) { dead = i; mark = ' ← ЗДЕСЬ УРОВЕНЬ УМЕР (клеток меньше нижней отметки)'; }
       else if (!planMap.has(M.stateKey(sn))) {
         const out = {};
         const p = M.planGoal({ ...lv, target }, sn, bd, out);
-        if (!p && !out.exhausted) { dead = i; mark = ' ← ЗДЕСЬ ЦЕЛЬ СТАЛА НЕДОСТИЖИМА (перебор не нашёл)'; }
+        if (!p && !out.exhausted) { dead = i; mark = ' ← ЗДЕСЬ ПОТОЛОК СТАЛ НЕДОСТИЖИМ (перебор не нашёл)'; }
         else if (!p) mark = ' (перебор не осилил — не знаю)';
       }
     }

@@ -55,9 +55,14 @@ export function safety(lv, target) {
   return { ratio: taps ? safe / taps : 1, worst, live: seen.size };
 }
 
+/* Заодно меряем ЗВЁЗДЫ. Отметка — не краска: верхнюю нельзя отдавать тупой игре,
+   нижнюю нельзя выдавать даром, иначе три звезды превращаются в одну победу с
+   украшениями — ровно та болезнь, от которой ушла прежняя схема. Считаем на тех же
+   случайных партиях, что и форму, — лишнего перебора это не стоит. */
 export function shape(lv, tries, seed) {
   const br = G.boardOf(lv);
   const rnd = G.makeRng(seed || 7);
+  const st0 = G.stateOf(lv), starMarks = G.marksOf(lv.len, G.maxLen(st0));
   let far = 0, adj = 0, gaps = 0, steps = 0; const bests = [];
   for (let t = 0; t < tries; t++) {
     let st = G.stateOf(lv);
@@ -76,7 +81,11 @@ export function shape(lv, tries, seed) {
   const starts = G.movesOf(G.stateOf(lv), lv.w, lv.h, br).filter((m) => m.eat);
   return { starts: starts.length, branch: (far + adj) / Math.max(1, steps),
     farShare: far / Math.max(1, far + adj), avgGap: gaps / Math.max(1, far + adj),
-    randMed: bests[Math.floor(bests.length / 2)], randTop: bests[bests.length - 1] };
+    randMed: bests[Math.floor(bests.length / 2)], randTop: bests[bests.length - 1],
+    starMarks,
+    starLow: starMarks[0] > G.maxLen(st0) ? 1 : 0,       // нижняя отметка выше стартовой длины
+    starMiss: bests.filter((b) => b < starMarks[0]).length / Math.max(1, bests.length),
+    starTop: bests.filter((b) => b >= starMarks[2]).length / Math.max(1, bests.length) };
 }
 
 export function beamBest(lv, width) {

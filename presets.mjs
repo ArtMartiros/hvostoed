@@ -5,6 +5,12 @@
    ходы нельзя гнать в ноль — один-два на ход нужны как передышка; и наклон сложности
    надо ПЕРЕМЕРИВАТЬ по факту, потому что построение задаёт только зазоры.
 
+   starLow/starTop — про звёзды. Звёзды теперь отметки ДЛИНЫ: нижняя обязана быть
+   выше стартовой длины (иначе горит до первого тапа), а верхняя не должна доставаться
+   тупой игре слишком часто, иначе три звезды — это одна победа с украшениями.
+   Пороги starTop поставлены по замеру медианы на 20 принятых уровнях каждого пресета
+   (ученик 0.74, средний 0.36, длинный 0.18, пустоты 0.14): режем хвост, а не середину.
+
    voids — суммарная длина пустот за решение, равна тому, насколько след решения
    больше цели. Потолок структурный: разрез с зазором k требует змеи длиной ≥ k+3,
    а к концу обратной прогулки куски короткие. Практически Σ ≲ 0.5·len. */
@@ -14,20 +20,20 @@ import * as S from './levelstats.mjs';
 export const PRESETS = {
   ученик:   { w: 7,  h: 7,  len: 14, moves: 4,  maxGap: 3, voids: 5,  peak: 1, breather: 3, straightBias: 0.7,
               decoys: 2, spiky: 0, sleepy: 1, apples: 1, portals: 0, mechs: 2, decoyMax: 3,
-              min: { decoyLive: 1, safety: 0.75, sols: 2, branch: 2, terrainUse: 1 },
-              max: { branch: 5, voidMiss: 2, runMax: 3 } },
+              min: { decoyLive: 1, safety: 0.75, sols: 2, branch: 2, terrainUse: 1, starLow: 1 },
+              max: { branch: 5, voidMiss: 2, runMax: 3, starTop: 0.9 } },
   средний:  { w: 9,  h: 9,  len: 22, moves: 6,  maxGap: 4, voids: 12,  peak: 1, breather: 3, straightBias: 0.7,
               decoys: 3, bridges: 1, turns: 2, spiky: 1, sleepy: 1, apples: 2, portals: 1, mechs: 6, decoyMax: 4,
-              min: { decoyLive: 1, safety: 0.65, sols: 3, branch: 2.5, farShare: 0.5, markUse: 1, terrainUse: 1 },
-              max: { branch: 6, voidMiss: 4, runMax: 3 } },
+              min: { decoyLive: 1, safety: 0.65, sols: 3, branch: 2.5, farShare: 0.5, markUse: 1, terrainUse: 1, starLow: 1 },
+              max: { branch: 6, voidMiss: 4, runMax: 3, starTop: 0.75 } },
   длинный:  { w: 10, h: 11, len: 34, moves: 9,  maxGap: 5, voids: 19, peak: 1, breather: 3, straightBias: 0.8,
               decoys: 4, bridges: 1, turns: 3, spiky: 1, sleepy: 2, apples: 2, portals: 1, mechs: 6, decoyMax: 5,
-              min: { decoyLive: 1, safety: 0.6, sols: 3, branch: 3, farShare: 0.5, markUse: 1, terrainUse: 1 },
-              max: { branch: 7, voidMiss: 5, runMax: 3 } },
+              min: { decoyLive: 1, safety: 0.6, sols: 3, branch: 3, farShare: 0.5, markUse: 1, terrainUse: 1, starLow: 1 },
+              max: { branch: 7, voidMiss: 5, runMax: 3, starTop: 0.5 } },
   пустоты:  { w: 10, h: 11, len: 30, moves: 8,  maxGap: 5, voids: 22, peak: 1, breather: 3, straightBias: 0.85,
               decoys: 5, bridges: 2, turns: 3, spiky: 1, sleepy: 2, apples: 2, portals: 1, mechs: 6, decoyMax: 4,
-              min: { decoyLive: 1, safety: 0.6, sols: 2, branch: 2.5, farShare: 0.7, avgGap: 1.3, markUse: 1, terrainUse: 1 },
-              max: { branch: 7, voidMiss: 5, runMax: 3 } },
+              min: { decoyLive: 1, safety: 0.6, sols: 2, branch: 2.5, farShare: 0.7, avgGap: 1.3, markUse: 1, terrainUse: 1, starLow: 1 },
+              max: { branch: 7, voidMiss: 5, runMax: 3, starTop: 0.5 } },
   простор:  { w: 12, h: 16, len: 52, moves: 13, maxGap: 5, voids: 33, peak: 1, breather: 3, straightBias: 0.8,
               decoys: 8, bridges: 2, turns: 4, spiky: 2, sleepy: 3, apples: 3, portals: 2, mechs: 6, decoyMax: 5, record: true,
               min: { decoyLive: 1, branch: 3, farShare: 0.6, avgGap: 1.2, alive: 0.2, markUse: 1, terrainUse: 1 },
@@ -105,6 +111,7 @@ export function measureCheap(lv, preset) {
   const mk = S.marks(lv), tr = S.terrain(lv);
   return { decoyLive: decoyLiveness(lv), decoyMove: decoyMove(lv), decoyFood: decoyFood(lv),
     fake: S.fakeDepth(lv), starts: sh.starts, branch: sh.branch,
+    starLow: sh.starLow, starMiss: sh.starMiss, starTop: sh.starTop, starMarks: sh.starMarks,
     markUse: mk.markUse, spikyUse: mk.spikyUse, sleepUse: mk.sleepUse,
     terrainUse: tr.terrainUse, gateUse: tr.gateUse, bridgeUse: tr.bridgeUse, turnUse: tr.turnUse,
     voids: cv.voids, voidMiss: cv.voidMiss, runMax: cv.runMax, restShare: cv.restShare,
@@ -146,7 +153,7 @@ export function measure(lv, preset) {
 }
 
 // какие поля проверяются на дешёвом заходе — остальные ждут дорогого
-const CHEAP = new Set(['decoyLive', 'decoyMove', 'decoyFood', 'starts', 'branch', 'farShare', 'avgGap', 'voidMiss', 'runMax', 'tiltGap', 'restShare', 'markUse', 'spikyUse', 'sleepUse', 'terrainUse', 'gateUse', 'bridgeUse', 'turnUse']);
+const CHEAP = new Set(['decoyLive', 'decoyMove', 'decoyFood', 'starLow', 'starMiss', 'starTop', 'starts', 'branch', 'farShare', 'avgGap', 'voidMiss', 'runMax', 'tiltGap', 'restShare', 'markUse', 'spikyUse', 'sleepUse', 'terrainUse', 'gateUse', 'bridgeUse', 'turnUse']);
 function checkSome(p, m, cheapOnly) {
   const fail = [];
   for (const [k, v] of Object.entries(p.min || {})) {

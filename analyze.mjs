@@ -118,7 +118,7 @@ function solveCompat(lv, { allowLaunch, moveCap }) {
   function dfs(snakes, depth, seq) {
     const ml = maxLen(snakes);
     if (ml > best) best = ml;
-    if (ml >= lv.target) {
+    if (ml >= lv.ceiling) {
       sols++;
       if (depth < minMoves) { minMoves = depth; bestSeq = seq.slice(); }
       return;
@@ -157,7 +157,7 @@ function explore(lv) {
     const st = queue.shift();
     nStates++;
     const d = depthOf(st);
-    if (maxLen(st) >= lv.target) {
+    if (maxLen(st) >= lv.ceiling) {
       nWin++;
       if (minMoves == null || d < minMoves) minMoves = d;
       continue; // победа — поглощающее состояние
@@ -179,7 +179,7 @@ function explore(lv) {
     const k = key(snakes);
     if (memoWin.has(k)) return memoWin.get(k);
     let r;
-    if (maxLen(snakes) >= lv.target) r = true;
+    if (maxLen(snakes) >= lv.ceiling) r = true;
     else if (cap != null && depthOf(snakes) >= cap) r = false;
     else r = legalMoves(snakes, W, H, rockSet).some((mv) => canWin(stepState(snakes, mv)));
     memoWin.set(k, r);
@@ -189,7 +189,7 @@ function explore(lv) {
     const k = key(snakes);
     if (memoP.has(k)) return memoP.get(k);
     let r;
-    if (maxLen(snakes) >= lv.target) r = 1;
+    if (maxLen(snakes) >= lv.ceiling) r = 1;
     else if (cap != null && depthOf(snakes) >= cap) r = 0;
     else {
       const moves = legalMoves(snakes, W, H, rockSet);
@@ -206,7 +206,7 @@ function explore(lv) {
     const k = key(snakes);
     if (memoT.has(k)) return memoT.get(k);
     let r;
-    if (maxLen(snakes) >= lv.target) r = 1;
+    if (maxLen(snakes) >= lv.ceiling) r = 1;
     else if (!snakes.length || (cap != null && depthOf(snakes) >= cap)) r = 0;
     else {
       let acc = 0;
@@ -292,7 +292,7 @@ pack.levels.forEach((lv, i) => {
     : null;
 
   const row = {
-    pack: pack.name, n: i + 1, name: lv.name, w: lv.w, h: lv.h, target: lv.target, total, moves: cap,
+    pack: pack.name, n: i + 1, name: lv.name, w: lv.w, h: lv.h, ceiling: lv.ceiling, total, moves: cap,
     geo, solvable, sols: inCap.sols, minMoves: inCap.minMoves, bestSeq: inCap.bestSeq,
     launchRequired, bestNoLaunch: noL.best,
     solsLoose: loose ? loose.sols : null,
@@ -306,7 +306,7 @@ pack.levels.forEach((lv, i) => {
   };
   report.push(row);
   if (!asJson) {
-    console.log(`\n=== ${i + 1}. ${lv.name} ${lv.w}x${lv.h} цель=${lv.target} total=${total}${cap != null ? ` ходы<=${cap}` : ''} ===`);
+    console.log(`\n=== ${i + 1}. ${lv.name} ${lv.w}x${lv.h} потолок=${lv.ceiling} total=${total}${cap != null ? ` ходы<=${cap}` : ''} ===`);
     console.log(asciiMap(lv));
     console.log(`решаем=${solvable} решений=${inCap.sols} minMoves=${inCap.minMoves} | выпуск обязателен=${launchRequired} (без выпусков best=${noL.best})` +
       (loose ? ` | без лимита ходов sols=${loose.sols}` : ''));

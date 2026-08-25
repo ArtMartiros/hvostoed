@@ -19,18 +19,16 @@ concurrency:
 
 jobs:
   check:
-    name: Уровни, поля и подсказка
+    name: Уровни, отметки и подсказка
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Солвер по всем уровням
+      - name: Солвер — геометрия, потолок и отметки
         run: node solver.js hvostoed.jsx
-      - name: Поля режима рекорда
-        run: node records.mjs hvostoed.jsx
-      - name: Подсказка доводит до цели и до потолка
+      - name: Подсказка доводит до потолка
         run: node hints.mjs hvostoed.jsx
       - name: Игра проходит задуманный план генератора
         run: node plancheck.mjs 4
