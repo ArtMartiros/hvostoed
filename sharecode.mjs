@@ -16,7 +16,7 @@ const SIDE_IDX = { n: 0, s: 1, e: 2, w: 3 };
 const SIDE_NAME = ['n', 's', 'e', 'w'];
 // ручки в фиксированном порядке: их значения и есть ответ на «какие настройки дают плохие уровни»
 export const CFG_KEYS = ['w', 'h', 'len', 'moves', 'decoys', 'bridges', 'turns',
-  'spiky', 'sleepy', 'voids', 'peak100', 'breather', 'maxGap', 'apples', 'portals', 'mechs'];
+  'spiky', 'sleepy', 'voids', 'peak100', 'breather', 'maxGap', 'apples', 'portals', 'mechs', 'fake'];
 
 const b64 = (bytes) => {
   let s = '';

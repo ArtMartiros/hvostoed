@@ -22,43 +22,77 @@ export const PRESETS = {
               max: { branch: 6, voidMiss: 4, runMax: 3 } },
   длинный:  { w: 10, h: 11, len: 34, moves: 9,  maxGap: 5, voids: 19, peak: 1, breather: 3, straightBias: 0.8,
               decoys: 4, bridges: 1, turns: 3, spiky: 1, sleepy: 2, apples: 2, portals: 1, mechs: 6, decoyMax: 5,
-              min: { decoyLive: 0.75, safety: 0.6, sols: 3, branch: 3, farShare: 0.5, markUse: 1, terrainUse: 1 },
+              min: { decoyLive: 1, safety: 0.6, sols: 3, branch: 3, farShare: 0.5, markUse: 1, terrainUse: 1 },
               max: { branch: 7, voidMiss: 5, runMax: 3 } },
   пустоты:  { w: 10, h: 11, len: 30, moves: 8,  maxGap: 5, voids: 22, peak: 1, breather: 3, straightBias: 0.85,
               decoys: 5, bridges: 2, turns: 3, spiky: 1, sleepy: 2, apples: 2, portals: 1, mechs: 6, decoyMax: 4,
-              min: { decoyLive: 0.75, safety: 0.6, sols: 2, branch: 2.5, farShare: 0.7, avgGap: 1.3, markUse: 1, terrainUse: 1 },
+              min: { decoyLive: 1, safety: 0.6, sols: 2, branch: 2.5, farShare: 0.7, avgGap: 1.3, markUse: 1, terrainUse: 1 },
               max: { branch: 7, voidMiss: 5, runMax: 3 } },
   простор:  { w: 12, h: 16, len: 52, moves: 13, maxGap: 5, voids: 33, peak: 1, breather: 3, straightBias: 0.8,
               decoys: 8, bridges: 2, turns: 4, spiky: 2, sleepy: 3, apples: 3, portals: 2, mechs: 6, decoyMax: 5, record: true,
-              min: { decoyLive: 0.6, branch: 3, farShare: 0.6, avgGap: 1.2, alive: 0.2, markUse: 1, terrainUse: 1 },
+              min: { decoyLive: 1, branch: 3, farShare: 0.6, avgGap: 1.2, alive: 0.2, markUse: 1, terrainUse: 1 },
               max: { branch: 8, alive: 0.65, voidMiss: 7, runMax: 3 } },
 };
 
 function check(p, m) { return checkSome(p, m, true).concat(checkSome(p, m, false)); }
 const fmt = (x) => (x == null ? '—' : (typeof x === 'number' ? +x.toFixed(2) : x));
 
-/* Обманка обязана быть соблазном, а не декорацией: её либо можно съесть прямо
-   сейчас, либо она сама может пойти. Аудит показал, что иначе на мелких досках
-   часть обманок оседает в углах и не участвует ни в чём. */
+/* Обманка обязана быть соблазном, а не декорацией — и меряется это ровно теми
+   двумя бедами, которые игрок видит глазом:
+     · ею нельзя СХОДИТЬ — тап по ней авария или вылет, а не обед (decoyMove);
+     · её нельзя СЪЕСТЬ — ничей луч не достаёт до её хвоста (decoyFood).
+   Замер до правки, 150 сидов на пресет: законным обедом тап был у 18–37% обманок,
+   в КРАЙ поля смотрели 42–60%, съесть на старте можно было 7–15%. Отсюда и жалоба
+   игрока «видно, что трогать не надо»: игра учит следить за взглядом, а взгляд же
+   и сортировал доску на дело и мусор — кусок решения смотрит в чужой хвост в 90%
+   случаев, обманка смотрела в 22%.
+
+   Прежняя метрика decoyLive не ловила ни того ни другого, и обе причины стоили
+   правды. Числитель считал ВСЕХ обманок, включая мостовых и приманок, а знаменатель
+   — только обычных: доля вылезала выше единицы (1.50 на «среднем»), и одна живая
+   мостовая закрывала собой двух мёртвых обычных. А вылет шёл в зачёт как «сама
+   может пойти» — хотя это ход, которым змея пропадает с поля вместе со своей
+   длиной, и добровольно его никто не делает. Замер лжи: приёмка показывала
+   1.00–1.50, честный счёт давал 0.00–0.67, и три уровня «среднего» из пяти уехали
+   с нулём живых обманок при коридоре decoyLive: 1.
+
+   Мостовая обманка и приманка в зачёт по-прежнему не идут, и по прежним причинам:
+   работа мостовой — стоять поперёк луча и врать, что путь закрыт, работа приманки
+   и наблюдателя — жалить, и меряет её markUse. */
+const plainDecoys = (lv) => {
+  const idx = [];
+  lv.snakes.forEach((s, i) => { if (s.decoy && !s.onBridge && !s.trap) idx.push(i); });
+  return idx;
+};
+
+function decoyMove(lv) {
+  const idx = plainDecoys(lv);
+  if (!idx.length) return 1;
+  const st = G.stateOf(lv), br = G.boardOf(lv);
+  return idx.filter((i) => !st[i].sleep && st[i].cells.length > 1
+    && G.raycast(st, i, lv.w, lv.h, br).kind === 'tail').length / idx.length;
+}
+
+function decoyFood(lv) {
+  const idx = plainDecoys(lv);
+  if (!idx.length) return 1;
+  const seen = S.tailsSeen(lv);
+  return idx.filter((i) => seen.has(lv.snakes[i].id)).length / idx.length;
+}
+
+/* Обманка ИГРАЕТ, если верно хоть одно: ею можно сходить или её можно съесть.
+   Требовать обоего сразу нельзя — клетка под чужим лучом и клетка с видом на чужой
+   хвост совпадают редко, — а вот «ни того ни другого» это ровно та мебель, из-за
+   которой всё и затевалось. Поэтому коридор на объединении держим жёстким (всё до
+   единой), а на decoyMove — мягким: он отвечает лишь за то, чтобы доска не
+   состояла из одних съедобных бревён. */
 function decoyLiveness(lv) {
-  // Мостовая обманка исключена намеренно: её работа — стоять поперёк луча и врать,
-  // что путь закрыт. Она соблазняет собой самим фактом, а не съедобностью, и то,
-  // что решение через неё проходит, гарантировано построением.
-  // Колючая-ловушка — по той же причине: её хвост несъедобен по определению, а её
-  // работа — стоять в чужом луче и жалить. Что она работает, меряет markUse.
-  // Наблюдатель (тот же признак trap) — зеркальный случай: он не стоит в луче, а
-  // САМ смотрит в колючий хвост той, что ест последней. Тап по нему — авария, то
-  // есть ходом он и не может быть; работает он или нет, меряет тот же markUse.
-  const decoys = lv.snakes.filter((s) => s.decoy && !s.onBridge && !s.trap);
-  if (!decoys.length) return 1;
-  const st = G.stateOf(lv);
-  const mv = G.movesOf(st, lv.w, lv.h, G.boardOf(lv));
-  const live = new Set();
-  lv.snakes.forEach((s, i) => {
-    if (!s.decoy) return;
-    for (const m of mv) if (m.i === i || (m.eat && m.prey === i)) { live.add(i); break; }
-  });
-  return live.size / decoys.length;
+  const idx = plainDecoys(lv);
+  if (!idx.length) return 1;
+  const st = G.stateOf(lv), br = G.boardOf(lv), seen = S.tailsSeen(lv);
+  return idx.filter((i) => seen.has(lv.snakes[i].id)
+    || (!st[i].sleep && st[i].cells.length > 1 && G.raycast(st, i, lv.w, lv.h, br).kind === 'tail')
+  ).length / idx.length;
 }
 
 /* Метрики считаются в два захода: сначала дешёвые (форма поля, живость обманок),
@@ -69,7 +103,8 @@ export function measureCheap(lv, preset) {
   const sh = S.shape(lv, preset.record ? 120 : 50, lv.len * 7 + 1);
   const cv = S.curve(lv, null) || {};
   const mk = S.marks(lv), tr = S.terrain(lv);
-  return { decoyLive: decoyLiveness(lv), starts: sh.starts, branch: sh.branch,
+  return { decoyLive: decoyLiveness(lv), decoyMove: decoyMove(lv), decoyFood: decoyFood(lv),
+    fake: S.fakeDepth(lv), starts: sh.starts, branch: sh.branch,
     markUse: mk.markUse, spikyUse: mk.spikyUse, sleepUse: mk.sleepUse,
     terrainUse: tr.terrainUse, gateUse: tr.gateUse, bridgeUse: tr.bridgeUse, turnUse: tr.turnUse,
     voids: cv.voids, voidMiss: cv.voidMiss, runMax: cv.runMax, restShare: cv.restShare,
@@ -84,6 +119,9 @@ export function measureDeep(lv, preset, m) {
      «достижима ли ещё длина lv.len» заставляет обойти всё пространство состояний
      целиком, когда ответ «нет». На «просторе» это стоило 24 секунд за попытку
      против 450 мс на всё остальное. */
+  /* Наказывает ли ложная ветка — вопрос дорогой (полный обход достижимости), поэтому
+     он здесь, а не в дешёвом заходе, и только там, где у уровня вообще есть цель. */
+  if (!preset.record && (preset.fake || 0) > 0) m.fakeTrap = S.fakeTrap(lv);
   if (!preset.record) {
     const cv = S.curve(lv, lv.len);
     if (cv) { m.tiltRisk = cv.tiltRisk; m.endRisk = cv.rows[cv.rows.length - 1].dead;
@@ -108,7 +146,7 @@ export function measure(lv, preset) {
 }
 
 // какие поля проверяются на дешёвом заходе — остальные ждут дорогого
-const CHEAP = new Set(['decoyLive', 'starts', 'branch', 'farShare', 'avgGap', 'voidMiss', 'runMax', 'tiltGap', 'restShare', 'markUse', 'spikyUse', 'sleepUse', 'terrainUse', 'gateUse', 'bridgeUse', 'turnUse']);
+const CHEAP = new Set(['decoyLive', 'decoyMove', 'decoyFood', 'starts', 'branch', 'farShare', 'avgGap', 'voidMiss', 'runMax', 'tiltGap', 'restShare', 'markUse', 'spikyUse', 'sleepUse', 'terrainUse', 'gateUse', 'bridgeUse', 'turnUse']);
 function checkSome(p, m, cheapOnly) {
   const fail = [];
   for (const [k, v] of Object.entries(p.min || {})) {
@@ -139,6 +177,8 @@ export const HAVE = {
   spiky:   (lv) => lv.snakes.filter((s) => s.spiky).length,
   sleepy:  (lv) => lv.snakes.filter((s) => s.sleep && !s.apple).length,
   decoys:  (lv) => lv.snakes.filter((s) => s.decoy).length,
+  // ветку меряем ИГРОЙ: сколько ходов подряд она реально выдерживает на этой доске
+  fake:    (lv) => S.fakeDepth(lv),
 };
 
 export function shortfall(lv, p) {
@@ -189,6 +229,10 @@ export function craftOnce(preset, seed) {
   if (cheapBad.length) return { fail: cheapBad.join(', ') };
   measureDeep(lv, p, m);
   if (m.shortcut) return { fail: 'есть решение короче задуманного' };
+  /* Ветка, после которой цель ещё достижима, — не ловушка. Ручка обещает не «цепочку
+     обманок», а «ход, за который придётся отменять»: без этой проверки knob собирал
+     ветки, которые safety даже ПОДНИМАЛИ (замер: 0.80 → 0.87). */
+  if ((p.fake || 0) > 0 && !p.record && !m.fakeTrap) return { fail: 'fakeTrap ветка не наказывает' };
   const bad = checkSome(p, m, false);
   if (bad.length) return { fail: bad.join(', ') };
   return { level: lv, metrics: m, preset, seed, record: !!p.record };

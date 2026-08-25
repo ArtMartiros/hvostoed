@@ -8,6 +8,7 @@
 import fs from 'fs';
 import { PRESETS, craftOnce } from './presets.mjs';
 import * as G from './generator.mjs';
+import * as LS from './levelstats.mjs';   // S уже занято вырезкой солвера
 
 const src = fs.readFileSync('hvostoed.jsx', 'utf8');
 const logic = src.slice(src.indexOf('const SIDES = { n:'), src.indexOf('function buildEatMove'));
@@ -64,7 +65,14 @@ const CASES = Object.keys(PRESETS).filter((n) => !PRESETS[n].record).map((n) => 
      Проверять его надо ровно так же, ходом игры: шипы на участнице решения — это
      чужие лучи, упирающиеся в её хвост, и разойдись игра с генератором хоть на одном,
      уровень встанет колом там, где план считал ход состоявшимся. */
-  .concat([['колючая ест последней', { ...PRESETS['средний'], decoys: 2, spiky: 3, sleepy: 1 }, true]]);
+  .concat([['колючая ест последней', { ...PRESETS['средний'], decoys: 2, spiky: 3, sleepy: 1 }, true]])
+  /* И отдельно — ЛОЖНАЯ ВЕТКА. Её обещание держится на одном свойстве обеда: голова
+     едока доезжает до головы съеденной и перенимает её направление, поэтому цепочка
+     лучей работает как цепочка ходов. Свойство это живёт в applyEat, копий у applyEat
+     две — в игре и в генераторе, — и разойдись они хоть на клетку, ветка развалилась
+     бы на втором ходу: генератор считал бы её собранной, а игрок упирался в аварию.
+     Поэтому здесь ветку проходит ИГРА, тем же тапом и по тому же входу. */
+  .concat([['ложная ветка', { ...PRESETS['средний'], decoys: 4, spiky: 0, sleepy: 1, apples: 1, fake: 2 }, false, 2]]);
 
 let bad = 0;
 const wall = turnWallCase();
@@ -73,7 +81,7 @@ console.log(`  ${'стенка поворота'.padEnd(9)} проверок 9, 
   (wall.length ? 'РАСХОЖДЕНИЕ' : 'все три копии механики держат стенку'));
 wall.forEach((f) => console.log('      ' + f));
 
-for (const [name, preset, lead] of CASES) {
+for (const [name, preset, lead, fakeWant] of CASES) {
   let ok = 0, tried = 0;
   const fails = [];
   for (let seed = 1; seed <= 900 && ok < WANT; seed++) {
@@ -94,6 +102,39 @@ for (const [name, preset, lead] of CASES) {
     // случай, ради которого случай и заведён: шипы носит участница решения
     if (lead && !lv.snakes.find((s) => s.id === lv.moves[lv.moves.length - 1].eater).spiky) {
       fails.push(`сид ${seed}: та, что ест последней, без шипов`); continue; }
+    if (fakeWant) {
+      /* Ветка открывается не обязательно на старте: дверь ищется на любом шагу плана.
+         Поэтому игре даём ровно тот путь, который прошёл бы игрок, — задуманные ходы
+         до нужного шага, а дальше тапы по ветке одной и той же змеёй. */
+      const links = new Set(lv.snakes.filter((s) => s.fake).map((s) => s.id));
+      const plain = new Set(lv.snakes.filter((s) => !s.decoy).map((s) => s.id));
+      const br = G.boardOf(lv);
+      const boards = LS.planBoards(lv);
+      let at = -1, who = null;
+      for (let m = 0; m < boards.length && at < 0; m++) {
+        for (let i0 = 0; i0 < boards[m].length; i0++) {
+          if (!plain.has(boards[m][i0].id)) continue;
+          let st = boards[m], j = i0, n = 0;
+          for (;;) {
+            if (st[j].sleep || st[j].cells.length < 2) break;
+            const r = G.raycast(st, j, lv.w, lv.h, br);
+            if (r.kind !== 'tail' || !links.has(st[r.prey].id)) break;
+            const eater = st[j].id;
+            st = G.applyEat(st, j, r); n++;
+            j = st.findIndex((q) => q.id === eater);
+          }
+          if (n >= fakeWant) {
+            at = m; who = 's' + lv.snakes.findIndex((q) => q.id === boards[m][i0].id); break;
+          }
+        }
+      }
+      if (at < 0) { fails.push(`сид ${seed}: ветки на ${fakeWant} ходов нет`); continue; }
+      const fresh = lv.snakes.map((s, i) => ({ id: 's' + i, cells: s.cells.map((c) => c.slice()),
+        spiky: !!s.spiky, sleep: !!s.sleep || !!s.apple }));
+      const ran = M.walkSids({ w: lv.w, h: lv.h }, fresh,
+        sids.slice(0, at).concat(Array(fakeWant).fill(who)), board);
+      if (ran.bad) { fails.push(`сид ${seed}: игра не прошла ложную ветку — ${ran.bad}`); continue; }
+    }
     ok++;
   }
   if (fails.length || ok < WANT) bad++;

@@ -130,31 +130,108 @@ const tiltOf = (a) => {
    бодрой, ей было бы куда пойти, — иначе «спит» неотличимо от «застряла».
    Ставится это построением, но между постановкой и итоговой доской добавляются
    другие обманки, и они могут заслонить ловушку. Поэтому меряем по факту. */
-export function marks(lv) {
+/* Доска на каждом шагу ЗАДУМАННОГО решения: до первого хода, после первого и так
+   далее. Одно место на всех, кто спрашивает «а что там на третьем ходу», — а таких
+   уже трое: пометки, ложная ветка и её ловушечность. */
+export function planBoards(lv) {
   const br = G.boardOf(lv);
+  const out = [];
+  let st = G.stateOf(lv);
+  for (let m = 0; ; m++) {
+    out.push(st);
+    if (m >= (lv.moves || []).length) break;
+    const i = st.findIndex((s) => s.id === lv.moves[m].eater);
+    if (i < 0) break;
+    const r = G.raycast(st, i, lv.w, lv.h, br);
+    if (r.kind !== 'tail') break;
+    st = G.applyEat(st, i, r);
+  }
+  return out;
+}
+
+/* Чьи ХВОСТЫ достаёт хоть чей-нибудь луч по ходу задуманного решения. Пометка работает
+   ровно тогда, когда до хвоста дотягиваются (marks), и обманку можно съесть ровно тогда
+   же (decoyFood в приёмке). */
+export function tailsSeen(lv) {
+  const br = G.boardOf(lv);
+  const works = new Set();
+  // съеденных по плану достают по определению — их хвост и есть цель хода
+  for (const m of lv.moves || []) works.add(m.prey);
+  for (const st of planBoards(lv)) {
+    for (let i = 0; i < st.length; i++) {
+      if (st[i].sleep) continue;
+      const r = G.raycast(st, i, lv.w, lv.h, br);
+      if (r.kind === 'spikyTail' || r.kind === 'tail') works.add(st[r.prey].id);
+    }
+  }
+  return works;
+}
+
+export function marks(lv) {
   const marked = lv.snakes.filter((s) => !s.apple && (s.spiky || s.sleep));
   if (!marked.length) return { markUse: 1, spikyUse: 1, sleepUse: 1 };
-  const works = new Set();
-  let state = G.stateOf(lv);
-  // спящую из решения съедают по плану — до её хвоста дотягиваются по определению
-  for (const m of lv.moves || []) works.add(m.prey);
-  for (let m = 0; m <= (lv.moves || []).length; m++) {
-    for (let i = 0; i < state.length; i++) {
-      if (state[i].sleep) continue;
-      const r = G.raycast(state, i, lv.w, lv.h, br);
-      if (r.kind === 'spikyTail' || r.kind === 'tail') works.add(state[r.prey].id);
-    }
-    if (m === (lv.moves || []).length) break;
-    const i = state.findIndex((s) => s.id === lv.moves[m].eater);
-    if (i < 0) break;
-    const r = G.raycast(state, i, lv.w, lv.h, br);
-    if (r.kind !== 'tail') break;
-    state = G.applyEat(state, i, r);
-  }
+  const works = tailsSeen(lv);
   const share = (arr) => (arr.length ? arr.filter((s) => works.has(s.id)).length / arr.length : 1);
   return { markUse: share(marked),
            spikyUse: share(lv.snakes.filter((s) => s.spiky)),
            sleepUse: share(lv.snakes.filter((s) => s.sleep && !s.apple)) };
+}
+
+/* ЛОЖНАЯ ВЕТКА: сколько её звеньев можно съесть подряд одной змеёй — и на каком шагу
+   плана это доступно. Считаем настоящей игрой, а не по чертежу генератора: ветку
+   строили симуляцией, но обещание должен подтвердить тот же код, каким ходит игрок.
+
+   Смотрим ВСЕ шаги задуманного решения, а не только старт. Со старта ветка почти
+   никогда и не открывается: каждый кусок решения смотрит в свою будущую добычу, а
+   клетки под лучами плана заняты зазорами. Развилка на третьем ходу игроку не хуже
+   стартовой, а хуже был бы её пропуск: он до неё дойдёт, идя по решению.
+
+   Флаг fake говорит лишь, какие змеи — звенья. Входить в ветку должен КУСОК РЕШЕНИЯ:
+   обманка, вошедшая в ветку, плану ничего не портит, потому что масса при обеде не
+   пропадает, а сливается в едока. */
+function runFake(lv, after) {
+  const br = G.boardOf(lv);
+  const links = new Set(lv.snakes.filter((s) => s.fake).map((s) => s.id));
+  if (!links.size) return null;
+  const plain = new Set(lv.snakes.filter((s) => !s.decoy).map((s) => s.id));
+  let best = 0, out = null;
+  for (const board of planBoards(lv)) {
+    for (let i0 = 0; i0 < board.length; i0++) {
+      if (!plain.has(board[i0].id)) continue;
+      let st = board, j = i0, n = 0;
+      for (;;) {
+        if (st[j].sleep || st[j].cells.length < 2) break;
+        const r = G.raycast(st, j, lv.w, lv.h, br);
+        if (r.kind !== 'tail' || !links.has(st[r.prey].id)) break;
+        const eater = st[j].id;
+        st = G.applyEat(st, j, r); n++;
+        j = st.findIndex((q) => q.id === eater);
+      }
+      if (n > best) { best = n; out = st; }
+      if (n) after(st);
+    }
+  }
+  return { best, out };
+}
+
+export function fakeDepth(lv) {
+  const got = runFake(lv, () => {});
+  return got ? got.best : 0;
+}
+
+/* Наказывает ли ветка. Пройти её целиком и спросить: цель ещё достижима? Ветка, после
+   которой цель жива, — не ловушка, а ещё один способ вырасти, и знать это надо точно,
+   а не по ощущению: масса в этой игре не теряется, поэтому лишний обед сам по себе не
+   вредит никогда. Вредит только геометрия — уехавший не туда кусок решения.
+
+   Достаточно ОДНОГО входа, кончающегося тупиком: игрок, попавшийся на него, отменяет
+   ходы, а это и есть цена ошибки, ради которой ручка заводилась. */
+export function fakeTrap(lv) {
+  if (!lv.snakes.some((s) => s.fake)) return 1;
+  const win = winner(lv, lv.len);
+  let trap = 0;
+  runFake(lv, (st) => { if (!trap && !win(st)) trap = 1; });
+  return trap;
 }
 
 /* Работает ли РЕЛЬЕФ. Мост, поворот и портал — клетки пола: если луч решения по ним

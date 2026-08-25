@@ -60,7 +60,9 @@ function audit(lv, target) {
       if (first) { firstAll++; if (alive) firstSafe++; }
       touched.add(st[m.i].tag);
       if (m.eat) touched.add(st[m.prey].tag);
-      if (decoyTags.has(st[m.i].tag)) decoyLive.add(st[m.i].tag);
+      // вылет за жизнь не считаем: змея пропадает с поля вместе со своей длиной,
+      // и добровольно так не ходят. Приёмка на этом же и обманывалась.
+      if (m.eat && decoyTags.has(st[m.i].tag)) decoyLive.add(st[m.i].tag);
       if (m.eat && decoyTags.has(st[m.prey].tag)) decoyLive.add(st[m.prey].tag);
       if (alive) { const k = key(nx); if (!seen.has(k)) { seen.add(k); stack.push(nx); } }
     }

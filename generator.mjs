@@ -417,7 +417,7 @@ export function gapPlan(M, budget, peak, breather, maxGap) {
 export function generate(cfg) {
   const rnd = makeRng(cfg.seed);
   cfg = { maxGap: 3, tailStraight: 0.6, branch: 0.5, straightBias: 0.55, decoys: 0,
-          peak: 1, breather: 3, ...cfg, _nextId: 1 };
+          peak: 1, breather: 3, fake: 0, ...cfg, _nextId: 1 };
   /* Сколько РАЗНЫХ механик пускать на доску — вопрос решённый ДО генератора.
      Раньше срезка жила здесь: ручка «Механик на уровень» молча обнуляла лишние
      механики случайным выбором по сиду. Замер: при mechs=2 из шести поднятых
@@ -570,6 +570,8 @@ export function generate(cfg) {
     const [x, y] = k.split(',').map(Number);
     return [x, y, v[0], v[1]];
   });
+  const lv0 = { bridges, turns, portals };       // пол, каким его увидит луч
+  const brd = boardOf(lv0);
 
   /* Колючая — не только приманка. Её отличие от обычной змеи ровно одно: ХВОСТ
      несъедобен. Значит шипы может носить и участница решения — но лишь та, до чьего
@@ -593,7 +595,6 @@ export function generate(cfg) {
   const watchers = [];                          // обманки, посаженные СМОТРЕТЬ в шипы
   const forced = wantSpiky > Math.max(0, cfg.decoys - sleepLeft);
   if (spikyLeft > 0 && winner != null && (forced || rnd() < 0.5)) {
-    const lv0 = { bridges, turns, portals };
     /* Пометка обязана работать: шипы на змее, в чей хвост никто не смотрит, ведут
        себя как обычное тело. Хвост победительницы по плану не ест никто — значит
        смотреть в него должен кто-то посторонний. Сначала ищем такого среди уже
@@ -633,16 +634,165 @@ export function generate(cfg) {
     }
   }
 
-  // обычные обманки — первыми, чтобы приманки ставились уже с их учётом
-  const decoys = [];
-  for (let t = 0; t < Math.max(0, cfg.decoys - spikyLeft - sleepLeft - watchers.length); t++) {
-    const len = 2 + Math.floor(rnd() * (cfg.decoyMax || 4));
-    const d = walk(rnd, cfg.w, cfg.h, len, forbidden, null, null, 0.4);
-    if (!d) continue;
-    decoys.push({ id: cfg._nextId++, cells: d, decoy: true });
-    for (const c of d) forbidden.add(ck(c));
+  const clear = new Set();                     // подлёт к уже поставленной обманке — не занимать
+  const markWant = spikyLeft + sleepLeft;      // слоты бюджета, которые держим под пометки
+
+  /* ЛОЖНАЯ ВЕТКА — цепочка обманок, которую можно ИГРАТЬ и с которой дорого
+     возвращаться. Всё, что выше, чинит обманку поштучно: чтобы тап по ней был ходом
+     и чтобы её можно было съесть. Но одиночный ход виден насквозь через один тап —
+     сходил, посмотрел, отменил. Головоломка начинается там, где ложный путь держится
+     несколько ходов и выглядит как решение.
+
+     Держится он бесплатно, потому что так устроен обед: голова едока проходит луч и
+     доезжает до ГОЛОВЫ съеденной, перенимая её направление. Значит цепочка взглядов
+     и есть цепочка ходов: съел первое звено — смотришь туда же, куда смотрело оно.
+
+     ВХОД В ВЕТКУ — из решения, и это главное. Первая сборка ставила всю цепочку на
+     клетках, которых решение не касается, и делала её головой ещё одну обманку.
+     Замер на 70 уровнях: в такую ветку не мог войти НИ ОДИН кусок решения, цель она
+     убивала в 1–3 случаях из 20, а safety при этом РОСЛА (0.80 → 0.87), и число
+     решений с 15 доходило до 42. Объяснение простое и стоит его записать: масса поля
+     при обеде не теряется, а сливается в едока, поэтому лишняя масса в этой игре не
+     наказывает НИКОГДА — наказать может только геометрия. Ветка из одних обманок,
+     стоящая в стороне, была не ловушкой, а ещё одним способом вырасти.
+
+     Поэтому хвост ПЕРВОГО звена садится под луч куска решения — теперь ветку начинает
+     участник плана, и, войдя, он уезжает с того места, где нужен. Каждое следующее
+     звено садится на луч, который видит доевший: съев звено, змея смотрит туда же,
+     куда смотрело оно, и следующий тап продолжает ветку. */
+  const fake = [];
+  const fakeWant = Math.max(0, cfg.fake || 0);
+  if (fakeWant > 0) {
+    // звенья держим короткими: длинному негде развернуться на узком луче, а роль
+    // звена — не масса, а взгляд в следующее
+    const linkLen = () => 2 + Math.floor(rnd() * Math.min(3, cfg.decoyMax || 4));
+    /* Цепочка строится НАЧЕРНО и переносится на доску только целиком. Без этого
+       половина попыток оставляла огрызок в одно звено: дверь встала, второе звено не
+       нашлось, а занятые клетки уже испортили доску следующей попытке. Замер на
+       «среднем», 200 сборок: 38 попыток обрываются на теле первого звена и ещё 34 —
+       на продолжении цепочки, но уровней с готовой веткой всё равно 107, потому что
+       откат позволяет перебрать двери одну за другой. */
+    const draft = (door) => {
+      const links = [], busy = new Set(), keep = new Set();
+      const put = (c, path, last) => {
+        if (clear.has(ck(c)) || busy.has(ck(c)) || keep.has(ck(c))) return null;
+        if (path.some((q) => clear.has(ck(q)) || busy.has(ck(q)))) return null;
+        const block = new Set(forbidden);
+        for (const q of clear) block.add(q);
+        for (const q of busy) block.add(q);
+        for (const q of keep) block.add(q);
+        for (const q of path) block.add(ck(q));
+        block.delete(ck(c));
+        /* Хвост звена задан клеткой, а голова — как ляжет; и ложится она куда попало.
+           Между тем следующее звено садится на ЛУЧ этого, и если голова упёрлась в
+           стену, ветка обрывается на первом же шаге. Поэтому из нескольких бросков
+           берём тот, у которого впереди больше свободных клеток. Замер на «среднем»:
+           полная цепочка на два хода собиралась в 11 сборках из 80, с выбором — в 12,
+           и настоящих ловушек среди них стало 9 против 7. Проверка тут приблизительная
+           (луч считается по доске ДО обеда, а играть его будет едок, накрывший телом и
+           подлёт, и звено) — потому это выбор позы, а не обещание; обещание держит
+           симуляция ниже. */
+        let best = null, room = -1;
+        for (let a = 0; a < 8; a++) {
+          const cells = walk(rnd, cfg.w, cfg.h, linkLen(), block, c, null, 0.4);
+          if (!cells) continue;
+          cells.reverse();                     // walk растит от начала — а нам нужен ХВОСТ в клетке
+          if (last) return cells;              // последнему звену смотреть уже некуда
+          const probe = state.concat(links).concat([{ id: -1, cells, decoy: true }]);
+          const r = raycast(probe, probe.length - 1, cfg.w, cfg.h, brd);
+          const free = r.path.filter((q) => !forbidden.has(ck(q)) && !clear.has(ck(q)) && !busy.has(ck(q))).length;
+          if (free > room) { room = free; best = cells; }
+        }
+        return best;
+      };
+      const add = (cells, path) => {
+        links.push({ id: cfg._nextId + links.length, cells, decoy: true, fake: true });
+        for (const q of cells) busy.add(ck(q));
+        for (const q of path) keep.add(ck(q));
+      };
+      // дверь: хвост первого звена — под луч куска решения, иначе в ветку некому войти
+      const first = put(door.c, door.path, fakeWant === 1);
+      if (!first) return null;
+      add(first, door.path);
+      /* Дальше цепочка растёт СИМУЛЯЦИЕЙ, а не по чертежу. Считать «луч звена упирается
+         в хвост следующего» на стартовой доске нельзя: съев звено, едок накрывает своим
+         телом и подлёт, и само звено, и луч с нового места идёт уже по другой доске —
+         запросто в собственный бок. Поэтому доигрываем ветку по-настоящему после каждого
+         добавления и следующее звено сажаем на луч, который видит доевший. */
+      for (;;) {
+        const states = planStates(state.concat(links), moves, cfg, lv0);
+        let st = states[door.m];
+        if (!st) return null;
+        let j = st.findIndex((q) => q.id === door.sid);
+        if (j < 0) return null;
+        let n = 0;
+        for (;;) {
+          if (st[j].sleep || st[j].cells.length < 2) break;
+          const r0 = raycast(st, j, cfg.w, cfg.h, brd);
+          if (r0.kind !== 'tail' || !links.some((l) => l.id === st[r0.prey].id)) break;
+          const eater = st[j].id;
+          st = applyEat(st, j, r0); n++;
+          j = st.findIndex((q) => q.id === eater);
+        }
+        if (n < links.length) return null;      // собранное не играется — эта дверь не годится
+        if (links.length >= fakeWant) return { links, keep };
+        const r = raycast(st, j, cfg.w, cfg.h, brd);
+        let made = false;
+        for (const c of shuffled(rnd, r.path.filter((q) => !forbidden.has(ck(q)) && !clear.has(ck(q)) && !busy.has(ck(q))))) {
+          const before = r.path.slice(0, r.path.findIndex((q) => ck(q) === ck(c)));
+          const cells = put(c, before, links.length + 1 >= fakeWant);
+          if (!cells) continue;
+          add(cells, before); made = true; break;
+        }
+        if (!made) return null;
+      }
+    };
+    /* Двери — свободные клетки на лучах кусков РЕШЕНИЯ, и ищутся они на КАЖДОМ шагу
+       задуманного плана, а не только на стартовой доске. Со старта их почти нет, и
+       это не случайность, а свойство обратного построения: каждый кусок решения уже
+       смотрит в свою будущую добычу, а клетки, над которыми летят лучи плана, лежат
+       в запретном списке. Замер на «среднем», 200 сборок: по стартовой доске дверь
+       находилась в среднем 0.3 на уровень (у 173 из 200 — ни одной) и ветка собиралась
+       на 25 уровнях; по всем шагам плана — 6.2 двери, и ветка собирается на 107.
+
+       Ветка, открывающаяся к третьему ходу, игроку не хуже стартовой, а лучше: он
+       идёт по решению, уже вложился — и тут видит развилку. Дойти до неё он может,
+       потому что состояния плана и есть то, что он проходит.
+
+       Клетки лучей решения безопасны по построению: и сами клетки решения, и все
+       клетки его зазоров лежат в запретном списке, поэтому звено не может встать на
+       путь ни одного задуманного хода. */
+    const doors = [];
+    planStates(state, moves, cfg, lv0).forEach((st, m) => {
+      for (let i = 0; i < st.length; i++) {
+        if (st[i].decoy || st[i].sleep || st[i].cells.length < 2) continue;
+        const r = raycast(st, i, cfg.w, cfg.h, brd);
+        const seen = [];
+        for (const c of r.path) {
+          if (!forbidden.has(ck(c)) && !clear.has(ck(c)))
+            doors.push({ c: c.slice(), path: seen.map((q) => q.slice()), m, sid: st[i].id });
+          seen.push(c.slice());
+        }
+      }
+    });
+    /* Двери перебираем от РАННИХ к поздним, случайно тасуя внутри одного шага. Дверь
+       на последнем шагу плана — развилка, до которой игрок доходит уже победителем: ни
+       соблазна, ни цены. Чем раньше открывается ветка, тем она честнее как ловушка.
+       На счётчиках это не видно (ловушек 49 против 48 из 200), и это ожидаемо: порядок
+       решает не СКОЛЬКО веток выйдет, а КАКАЯ из нескольких возможных достанется. */
+    const byStep = doors.reduce((a, d) => { (a[d.m] = a[d.m] || []).push(d); return a; }, {});
+    const ordered = Object.keys(byStep).map(Number).sort((x, y) => x - y)
+      .flatMap((m) => shuffled(rnd, byStep[m]));
+    for (const door of ordered) {
+      const got = draft(door);
+      if (!got) continue;
+      for (const l of got.links) { fake.push(l); for (const q of l.cells) forbidden.add(ck(q)); }
+      for (const q of got.keep) clear.add(q);
+      cfg._nextId += got.links.length;
+      break;
+    }
+    state = state.concat(fake);
   }
-  state = state.concat(decoys);
 
   /* Помеченные обманки — ПРИМАНКИ, а не украшение. И колючая, и спящая отличаются
      от обычной змеи ровно тогда, когда чей-то луч достаёт до их ХВОСТА: у колючей
@@ -653,14 +803,18 @@ export function generate(cfg) {
      и сажаем помеченную хвостом туда. Клетки самого решения и его зазоров лежат
      в запретном списке, так что подложить свинью решению это не может.
 
-     Три вещи, каждая из которых стоила половины пометок, пока не была сделана:
-     ставить ПОСЛЕ обычных обманок (иначе следующая же встанет перед ловушкой),
-     считать лучи по доске СО ВСЕМИ обманками, и запрещать телу приманки ложиться
-     на подлёт к собственному хвосту — оно же его и заслоняло. */
-  const spots = trapSpots(state, moves, cfg, forbidden, { bridges, turns, portals });
+     Две вещи, каждая из которых стоила половины пометок, пока не была сделана:
+     считать лучи по доске с уже стоящими обманками и запрещать телу приманки
+     ложиться на подлёт к собственному хвосту — оно же его и заслоняло.
+
+     А вот порядок с обычными обманками с тех пор перевернулся. Раньше приманки
+     ставились ПОСЛЕ них, потому что обычная обманка садилась куда попало и могла
+     встать ровно перед ловушкой. Теперь она садится к чужому лучу и обязана
+     уважать общий список подлётов clear — заслонить приманку она больше не может.
+     Зато обратный порядок нужен: клеток под лучом мало, и если их разберут
+     обычные обманки, пометкам не хватит, а недобор бракует уровень целиком. */
   const traps = [];
-  const clear = new Set();                     // подлёт к уже поставленной приманке — не занимать
-  for (const sp of shuffled(rnd, spots)) {
+  for (const sp of shuffled(rnd, trapSpots(state, moves, cfg, forbidden, lv0))) {
     if (spikyLeft <= 0 && sleepLeft <= 0) break;
     if (clear.has(ck(sp.c)) || sp.path.some((q) => clear.has(ck(q)))) continue;
     const len = 2 + Math.floor(rnd() * (cfg.decoyMax || 4));
@@ -677,10 +831,97 @@ export function generate(cfg) {
     for (const q of sp.path) clear.add(ck(q));
   }
   state = state.concat(traps);
+
+  /* Обычная обманка тоже обязана ИГРАТЬ, а не лежать мебелью. Раньше она садилась
+     куда влезет — walk по свободным клеткам, — и замер на 150 сидах по четырём
+     пресетам показал, чем это кончалось: тап по обманке был законным обедом лишь
+     у 18–37% из них, а 42–60% смотрели в КРАЙ поля, то есть тап её попросту терял.
+     Луч выдавал обманку раньше, чем игрок успевал задуматься: кусок решения смотрит
+     в чужой хвост в 90% случаев, обманка — в 22%. Отсюда и «видно, что трогать не
+     надо»: игра учит следить за взглядом, а взгляд же и сортировал доску на дело
+     и мусор.
+
+     Теперь обманка садится к чужому лучу — теми же двумя машинками, что уже
+     работают на пометки:
+       · sightSpots(…, null) — клетки, откуда виден ЧЕЙ УГОДНО хвост. Голова туда,
+         тело прочь: тап по обманке становится законным обедом;
+       · trapSpots — клетки, куда чужой луч долетает. Хвост туда: обманку становится
+         можно съесть — приманка без пометки.
+     Роли чередуются: доска, где все обманки одной породы, читается так же
+     однообразно, как доска из мусора.
+
+     Последнее слово — за настоящим raycast. Обзор считается по чистому полу и по
+     доске БЕЗ соседей, которых ещё не поставили, а тап игрока пойдёт по итоговой:
+     спот из середины решения на старте может смотреть совсем не туда. */
+  const decoys = [];
+  const see = shuffled(rnd, sightSpots(state, moves, cfg, forbidden, lv0, null));
+  const bait = shuffled(rnd, trapSpots(state, moves, cfg, forbidden, lv0));
+  const build = (sp, head) => {
+    if (clear.has(ck(sp.c)) || sp.path.some((q) => clear.has(ck(q)))) return null;
+    const block = new Set(forbidden);
+    for (const q of sp.path) block.add(ck(q));
+    for (const q of clear) block.add(q);
+    block.delete(ck(sp.c));
+    const len = 2 + Math.floor(rnd() * (cfg.decoyMax || 4));
+    // голова — в клетку обзора, шея — прочь от чужого хвоста: значит смотрит она в него
+    const d = walk(rnd, cfg.w, cfg.h, len, block, sp.c, head ? sp.away : null, 0.4);
+    if (!d) return null;
+    if (!head) d.reverse();                    // walk растит от начала — а нам нужен ХВОСТ в клетке
+    return d;
+  };
+  for (let t = 0; t < Math.max(0, cfg.decoys - markWant - watchers.length - fake.length); t++) {
+    let d = null;
+    const order = t % 2 === 0 ? [[see, true], [bait, false]] : [[bait, false], [see, true]];
+    for (const [pool, head] of order) {
+      while (pool.length && !d) {
+        const sp = pool.pop();
+        const cells = build(sp, head);
+        if (!cells) continue;
+        /* Обещание проверяем настоящим лучом — и это не перестраховка. Оба списка
+           клеток посчитаны ОДИН раз, по доске без соседей, которых ещё не поставили:
+           обманка, легшая раньше, запросто перекрывает подлёт к споту следующей.
+           Замер на «среднем»: без проверки каждый седьмой уровень браковался по
+           decoyLive — приёмка ловила ровно эти перекрытые обещания. */
+        const test = state.concat(decoys).concat([{ id: cfg._nextId, cells, decoy: true }]);
+        if (head) {                            // обещали законный ход — упирается ли луч в хвост
+          if (raycast(test, test.length - 1, cfg.w, cfg.h, brd).kind !== 'tail') continue;
+        } else {                               // обещали съедобность — достаёт ли кто до её хвоста
+          if (!tailSeen(test, moves, cfg, lv0, cfg._nextId)) continue;
+        }
+        d = cells;
+        for (const q of sp.path) clear.add(ck(q));
+      }
+      if (d) break;
+    }
+    /* Клеток под роль не нашлось — бросаем змею наугад, но не молча: из двух десятков
+       случайных бросков берём первый, у которого луч всё-таки упирается в чужой хвост.
+       Это тот же вопрос, что задаёт приёмка (decoyLive), только заданный на месте, и
+       он дешевле любого поиска: спот считался по чистому полу, а брошенная змея
+       спрашивает настоящую доску. Замер на «пустотах»: без этого запасной вариант
+       клал мебель, и приёмка браковала каждый четвёртый уровень.
+
+       Подлёты чужих ловушек обходим и здесь: змея, легшая поперёк луча, ведущего к
+       приманке, гасит чужую пометку — а это брак по markUse, то есть уровень целиком. */
+    if (!d) {
+      const free = new Set(forbidden);
+      for (const q of clear) free.add(q);
+      for (let a = 0; a < 24 && !d; a++) {
+        const cells = walk(rnd, cfg.w, cfg.h, 2 + Math.floor(rnd() * (cfg.decoyMax || 4)), free, null, null, 0.4);
+        if (!cells) continue;
+        const test = state.concat(decoys).concat([{ id: cfg._nextId, cells, decoy: true }]);
+        if (a < 23 && raycast(test, test.length - 1, cfg.w, cfg.h, brd).kind !== 'tail') continue;
+        d = cells;                             // на последней попытке берём что есть: недобор хуже мебели
+      }
+    }
+    if (!d) continue;
+    decoys.push({ id: cfg._nextId++, cells: d, decoy: true });
+    for (const c of d) forbidden.add(ck(c));
+  }
+  state = state.concat(decoys);
   return { w: cfg.w, h: cfg.h, snakes: state, moves, len: cfg.len, portals,
            mechs: MECHS.filter((k) => (cfg[k] || 0) > 0),
            apples: moves.filter((m) => m.apple).length,
-           decoys: decoys.length + traps.length + bridges.length + watchers.length, bridges, turns,
+           decoys: decoys.length + traps.length + bridges.length + watchers.length + fake.length, bridges, turns,
            voids: moves.reduce((a, m) => a + m.gap, 0), want, peak: cfg.peak, breather: cfg.breather };
 }
 
@@ -734,16 +975,21 @@ function tailSeen(start, moves, cfg, lv, id) {
 function sightSpots(start, moves, cfg, forbidden, lv, id) {
   const out = [], seen = new Set();
   for (const state of planStates(start, moves, cfg, lv)) {
-    const tgt = state.find((s) => s.id === id);
-    if (!tgt) break;
-    const T = tgt.cells[tgt.cells.length - 1];
-    for (const d of DIRS) {
-      const path = [];                                  // клетки МЕЖДУ головой и хвостом
-      for (let c = add(T, d); inside(cfg.w, cfg.h, c) && !forbidden.has(ck(c)); c = add(c, d)) {
-        const k = ck(c) + sideName(d);
-        if (!seen.has(k)) { seen.add(k);
-          out.push({ c: c.slice(), away: d, path: path.map((q) => q.slice()) }); }
-        path.push(c.slice());
+    /* id === null — «чей угодно хвост». Наблюдателю важно смотреть в КОНКРЕТНУЮ
+       колючую, а обычной обманке всё равно, на кого смотреть: ей нужен сам факт
+       законного хода, иначе тап по ней — авария, и она читается как мебель. */
+    const tgts = id == null ? state : state.filter((s) => s.id === id);
+    if (id != null && !tgts.length) break;
+    for (const tgt of tgts) {
+      const T = tgt.cells[tgt.cells.length - 1];
+      for (const d of DIRS) {
+        const path = [];                                // клетки МЕЖДУ головой и хвостом
+        for (let c = add(T, d); inside(cfg.w, cfg.h, c) && !forbidden.has(ck(c)); c = add(c, d)) {
+          const k = ck(c) + sideName(d);
+          if (!seen.has(k)) { seen.add(k);
+            out.push({ c: c.slice(), away: d, path: path.map((q) => q.slice()) }); }
+          path.push(c.slice());
+        }
       }
     }
   }

@@ -1967,6 +1967,12 @@ const CRAFT_KNOBS = [
   { k: "apples", nom: "Яблок",           min: 0, max: (c) => Math.max(0, c.moves - 1),
     hint: "добыча в одну клетку: +1 и никакого риска" },
   { k: "decoys", nom: "Обманок",        min: 0, max: 10 },
+  /* Ложная ветка на k ходов стоит k обманок: входит в неё кусок РЕШЕНИЯ, а дальше
+     цепочка взглядов работает как цепочка ходов — едок доезжает до головы съеденной
+     и перенимает её направление. Весь бюджет обманок ветка занять не может: хотя бы
+     одна должна остаться сама по себе, иначе доска — одна длинная подсказка. */
+  { k: "fake",   nom: "Ложная ветка (ходов)", min: 0, max: (c) => Math.max(0, Math.min(5, c.decoys - 1)), sub: true,
+    hint: "цепочка обманок: играется несколько ходов и заводит в тупик" },
   /* Колючих можно заказать на одну больше, чем обманок: шипы носит не только приманка, но и та
      змея, что ест ПОСЛЕДНЕЙ, — её хвоста решение не касается ни разу, поэтому
      несъедобным его сделать можно, а на любом другом куске решения нельзя. */
@@ -2016,7 +2022,10 @@ const WHYNOM = {
   spiky: "колючих столько не пристроить",
   sleepy: "спящих столько не набрать",
   decoys: "обманок столько не разместить",
-  decoyLive: "обманки ни во что не играют",
+  fake: "ложную ветку столько не протянуть",
+  fakeTrap: "ложная ветка никуда не заводит",
+  decoyMove: "обманкой не сходить — тап по ней авария",
+  decoyFood: "обманку не съесть — её хвост никому не виден",
   safety: "слишком много тапов насмерть",
   sols: "решение выходит единственным",
   branch: "ветвистость мимо коридора",
@@ -2264,7 +2273,7 @@ export default function App() {
       const cur = { ...PRESETS[name], ...(prev[name] || {}) };
       const got = typeof upd === "function" ? upd(cur) : upd;
       const keep = {};
-      for (const k of ["w", "h", "len", "moves", "decoys", "bridges", "turns", "spiky", "sleepy", "apples", "portals", "mechs", "voids", "peak", "breather"]) keep[k] = got[k];
+      for (const k of ["w", "h", "len", "moves", "decoys", "fake", "bridges", "turns", "spiky", "sleepy", "apples", "portals", "mechs", "voids", "peak", "breather"]) keep[k] = got[k];
       const next = { ...prev, [name]: keep };
       try { localStorage.setItem("hv-craftcfg", JSON.stringify(next)); } catch (e) {}
       return next;
