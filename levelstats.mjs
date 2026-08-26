@@ -146,8 +146,8 @@ export function planBoards(lv) {
   return out;
 }
 
-// чьи хвосты достаёт хоть чей-то луч по ходу решения: этим меряются и пометки
-// (marks), и съедобность обманок (decoyFood); пометка без луча — краска
+// чьи хвосты достаёт хоть кто-нибудь по ходу решения: этим меряются и пометки
+// (marks), и съедобность обманок (decoyFood); пометка, до которой никто не достаёт, — краска
 export function tailsSeen(lv) {
   const br = G.boardOf(lv);
   const works = new Set();
@@ -215,7 +215,7 @@ export function fakeTrap(lv) {
   return trap;
 }
 
-// работает ли рельеф: пол, по которому луч решения ни разу не идёт, — украшение
+// работает ли рельеф: пол, по которому ход решения ни разу не идёт, — украшение
 export function terrain(lv) {
   const br = G.boardOf(lv);
   const seen = new Set();

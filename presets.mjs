@@ -33,7 +33,7 @@ const fmt = (x) => (x == null ? '—' : (typeof x === 'number' ? +x.toFixed(2) :
 
 /* decoyMove — обманкой можно сходить (обед, вылет не в счёт), decoyFood — её
    можно съесть. Мостовые и приманки в зачёт не идут: их работа — лежать поперёк
-   луча и жалить (меряет markUse). История починки метрики — бриф §6d. */
+   пути и жалить (меряет markUse). История починки метрики — бриф §6d. */
 const plainDecoys = (lv) => {
   const idx = [];
   lv.snakes.forEach((s, i) => { if (s.decoy && !s.onBridge && !s.trap) idx.push(i); });

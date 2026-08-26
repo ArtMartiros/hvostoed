@@ -60,8 +60,8 @@ export function raycast(state, i, w, h, board) {
   state.forEach((s, si) => s.cells.forEach((c, ci) => occ.set(ck(c), { si, ci, len: s.cells.length })));
   const s = state[i];
   let d = facing(s.cells);
-  // голова может лежать на плитке: луч рождается внутри жёлоба, стенка своей
-  // клетки читается отдельно (гнуть нечего — у луча нет стороны входа)
+  // голова может лежать на плитке: змея трогается изнутри жёлоба, стенка своей
+  // клетки читается отдельно (гнуть нечего — у такого хода нет стороны входа)
   const own = turns && turns.get(ck(s.cells[0]));
   if (own) {
     const out = sideName(d);
@@ -73,7 +73,7 @@ export function raycast(state, i, w, h, board) {
   for (let step = 0; ; step++) {
     if (step > cap) return { kind: 'loop', gap: path.length, path, dir: d };
     if (!inside(w, h, c)) return { kind: 'edge', gap: path.length, path, dir: d };
-    if (bridges && bridges.has(ck(c))) { path.push(c); c = add(c, d); continue; }   // луч идёт над мостом
+    if (bridges && bridges.has(ck(c))) { path.push(c); c = add(c, d); continue; }   // над мостом ход не останавливается
     // спина поворота — стена даже под лежащей змеёй: читается РАНЬШЕ занятости
     const t = turns && turns.get(ck(c));
     const from = t ? sideName([-d[0], -d[1]]) : null;
@@ -90,7 +90,7 @@ export function raycast(state, i, w, h, board) {
     // портал: направление сохраняется; занятость выше — лёгшая змея перекрывает
     const g = gates && gates.get(ck(c));
     if (g) { path.push(c); c = g.slice(); continue; }
-    // клетка пуста и открыта — поворот гнёт луч (спину проверили выше)
+    // клетка пуста и открыта — поворот гнёт ход (спину проверили выше)
     if (t) d = SIDES[t[0] === from ? t[1] : t[0]];
     path.push(c); c = add(c, d);
   }
@@ -98,7 +98,7 @@ export function raycast(state, i, w, h, board) {
 
 export function applyEat(state, i, ray) {
   const eater = state[i], prey = state[ray.prey];
-  const path = ray.path.map((c) => c.slice());     // луч может гнуться — идём по его клеткам, а не по прямой
+  const path = ray.path.map((c) => c.slice());     // путь может гнуться — идём по его клеткам, а не по прямой
   for (let j = prey.cells.length - 1; j >= 0; j--) path.push(prey.cells[j]);
   const food = new Set(prey.cells.map(ck));
   const cells = eater.cells.map((c) => c.slice());
@@ -137,7 +137,7 @@ export function walk(rnd, w, h, len, blocked, start, firstDir, straightBias) {
     let dir = firstDir ? firstDir.slice() : null;
     let dead = false;
     while (cells.length < len) {
-      // firstDir задаёт первый шаг ЖЁСТКО: за порталом луч обязан продолжить тем же
+      // firstDir задаёт первый шаг ЖЁСТКО: за порталом ход обязан продолжиться тем же
       // направлением, каким вошёл, иначе портал в решении не собрать
       const force = cells.length === 1 && firstDir ? firstDir : null;
       const opts = [];
@@ -158,7 +158,7 @@ export function walk(rnd, w, h, len, blocked, start, firstDir, straightBias) {
 }
 
 /* Финальная змея сквозь порталы: строится отрезками, следующий начинает первый
-   шаг тем же направлением, каким кончился предыдущий (луч идёт по убыванию
+   шаг тем же направлением, каким кончился предыдущий (змея идёт по убыванию
    индексов, портал E→X сохраняет направление сам). Отрезок ≥ 3 клеток — иначе
    у куска нет взгляда. */
 function walkGated(rnd, cfg) {
@@ -199,7 +199,7 @@ function walkGated(rnd, cfg) {
 
 /* ---------- перебор способов отменить обед ----------
    Прямизна нужна только на входе (прицел смотрит в первую клетку зазора), изгибы
-   зазора становятся плитками пола. Плитка гнёт ВСЕ лучи навсегда, поэтому вариант
+   зазора становятся плитками пола. Плитка гнёт ВСЕ ходы навсегда, поэтому вариант
    возвращает список плиток и сквозных клеток — их совместимость проверяется со
    всеми принятыми ходами. minB=1 — добыча в одну клетку, яблоко: всегда спящее
    (нет взгляда), в остальном обычная добыча. */
@@ -211,14 +211,14 @@ function splitOptions(M, maxGap, minB, gates) {
     for (let k = 0; k <= maxGap && b + k <= n - 1; k++) {
       const aBodyLen = n - b - k;
       const first = sub(cells[b + k - 1] || cells[b - 1], cells[b + k]);
-      // первый шаг луча из головы едока — только обычный: портал под головой
+      // первый шаг едока — только обычный: портал под головой
       // перекрыт ею же, занятость проверяется раньше портала
       if (!unit(first)) continue;
       const tiles = [], thru = [], gated = [];
       let d = first, ok = true;
       for (let t = b + k - 1; t >= b; t--) {
         // портал в зазоре срабатывает ВСЕГДА (зазор пуст, отменить нечем):
-        // либо он уносит луч ровно туда, куда идёт разрез, либо разреза нет
+        // либо он уносит змею ровно туда, куда идёт разрез, либо разреза нет
         const g = gates && gates.get(ck(cells[t]));
         if (g) {
           if (g[0] !== cells[t - 1][0] || g[1] !== cells[t - 1][1]) { ok = false; break; }
@@ -279,7 +279,7 @@ function unEat(rnd, cfg, state, si, opt) {
   const gapCells = cells.slice(b, b + k).map((c) => c.slice());
 
   // хвост дорастает на k клеток; занято всё, кроме отменяемой змеи, плюс жертва,
-  // тело едока и клетки зазора — зазор обязан остаться пустым, иначе луч не долетит
+  // тело едока и клетки зазора — зазор обязан остаться пустым, иначе змея не дойдёт
   const blocked = occSet(state, M);
   for (const c of B.cells) blocked.add(ck(c));
   for (const c of aBody) blocked.add(ck(c));
@@ -310,8 +310,8 @@ function unEat(rnd, cfg, state, si, opt) {
   if (A.cells.length !== n - b) return null;
   const next = state.map((s, i) => (i === si ? A : s));
   next.push(B);
-  // клетка, на которой луч ОБЯЗАН остановиться: хвост жертвы. Мост на ней
-  // означал бы, что луч над жертвой пролетел, — поэтому её надо знать снаружи
+  // клетка, на которой ход ОБЯЗАН остановиться: хвост жертвы. Мост на ней
+  // означал бы, что над жертвой прошли поверху, — поэтому её надо знать снаружи
   return { state: next, move: { eater: A.id, prey: B.id, gap: k, apple: b === 1 },
            gapCells, stop: B.cells[b - 1].slice() };
 }
@@ -372,8 +372,8 @@ export function generate(cfg) {
   for (const [x, y, u, v] of portals) { gateCells.add(ck([x, y])); gateCells.add(ck([u, v])); }
   for (const k of gateCells) floor.thru.add(k);
   let debt = 0;                                 // недобор зазоров, размазываем по оставшимся ходам
-  const allGaps = [];                           // клетки, через которые летят лучи решения — кандидаты в мосты
-  const stops = new Set();                      // а на этих лучи решения ОСТАНАВЛИВАЮТСЯ: там не место ни мосту, ни плитке
+  const allGaps = [];                           // клетки, через которые идут ходы решения — кандидаты в мосты
+  const stops = new Set();                      // а на этих ходы решения ОСТАНАВЛИВАЮТСЯ: там не место ни мосту, ни плитке
   let applesLeft = cfg.apples || 0;
   const gatesLeft = new Set(portals.map(([x, y]) => ck([x, y])));
 
@@ -433,7 +433,7 @@ export function generate(cfg) {
      не даём (колючая соня — валун в форме змеи). Мост снимает запрет тени с одной
      клетки зазора, и обманка садится прямо на него — мост без змеи бессмыслен.
      Мосту запрещены: занятая клетка, плитка, вход/выход портала (отменил бы
-     перенос) и стоп-клетка луча (над мостом обед не состоится). */
+     перенос) и стоп-клетка хода (над мостом обед не состоится). */
   const bridges = [];
   const busy = occSet(state);
   const gapPool = shuffled(rnd, allGaps.filter((c) => !busy.has(ck(c)) && !floor.tiles.has(ck(c))
@@ -461,7 +461,7 @@ export function generate(cfg) {
     const [x, y] = k.split(',').map(Number);
     return [x, y, v[0], v[1]];
   });
-  const lv0 = { bridges, turns, portals };       // пол, каким его увидит луч
+  const lv0 = { bridges, turns, portals };       // пол, каким его увидит змея
   const brd = boardOf(lv0);
 
   /* Шипы может носить и та, что ест последней, — её хвоста решение не касается
@@ -485,7 +485,7 @@ export function generate(cfg) {
       // голова — в клетку обзора, шея — прочь от хвоста: значит смотрит она в хвост
       const d = walk(rnd, cfg.w, cfg.h, len, block, sp.c, sp.away, 0.4);
       if (!d) continue;
-      // последнее слово за настоящим лучом: на клетке хвоста может лежать мост
+      // последнее слово за настоящим ходом: на клетке хвоста может лежать мост
       // или спина плитки — без проверки шипы выходили краской
       const cand = { id: cfg._nextId, cells: d, decoy: true, trap: true };
       if (!tailSeen(state.concat([cand]), moves, cfg, lv0, winner)) continue;
@@ -528,7 +528,7 @@ export function generate(cfg) {
         for (const q of keep) block.add(q);
         for (const q of path) block.add(ck(q));
         block.delete(ck(c));
-        // следующее звено сядет на луч этого: из бросков берём позу с наибольшим
+        // следующее звено сядет на путь этого: из бросков берём позу с наибольшим
         // простором впереди (это выбор позы, обещание держит симуляция ниже)
         let best = null, room = -1;
         for (let a = 0; a < 8; a++) {
@@ -548,12 +548,12 @@ export function generate(cfg) {
         for (const q of cells) busy.add(ck(q));
         for (const q of path) keep.add(ck(q));
       };
-      // дверь: хвост первого звена — под луч куска решения, иначе в ветку некому войти
+      // дверь: хвост первого звена — на путь куска решения, иначе в ветку некому войти
       const first = put(door.c, door.path, fakeWant === 1);
       if (!first) return null;
       add(first, door.path);
       // цепочка растёт симуляцией: после каждого звена ветка доигрывается
-      // по-настоящему, следующее садится на луч, который видит доевший
+      // по-настоящему, следующее садится на путь, который видит доевший
       for (;;) {
         const states = planStates(state.concat(links), moves, cfg, lv0);
         let st = states[door.m];
@@ -582,7 +582,7 @@ export function generate(cfg) {
         if (!made) return null;
       }
     };
-    // двери (клетки на лучах кусков решения) ищутся на КАЖДОМ шагу плана — со
+    // двери (клетки на путях кусков решения) ищутся на КАЖДОМ шагу плана — со
     // старта их почти нет по свойству построения (0.3 → 6.2 на уровень, ветка
     // собиралась на 25 → 107 из 200)
     const doors = [];
@@ -613,10 +613,10 @@ export function generate(cfg) {
     state = state.concat(fake);
   }
 
-  /* Приманки: пометка отличается от краски, только когда чей-то луч достаёт до
-     хвоста — сажаем хвостом на такую клетку. Лучи считаются по доске с уже
+  /* Приманки: пометка отличается от краски, только когда кто-то достаёт ходом до
+     хвоста — сажаем хвостом на такую клетку. Ходы считаются по доске с уже
      стоящими обманками, телу приманки нельзя ложиться на подлёт к своему хвосту.
-     Приманки ставятся РАНЬШЕ обычных обманок: клеток под лучом мало, а недобор
+     Приманки ставятся РАНЬШЕ обычных обманок: клеток на чужих путях мало, а недобор
      пометок бракует уровень целиком. */
   const traps = [];
   for (const sp of shuffled(rnd, trapSpots(state, moves, cfg, forbidden, lv0))) {
@@ -639,7 +639,7 @@ export function generate(cfg) {
 
   /* Обычная обманка тоже играет, а не лежит мебелью (замер: раньше 42–60% смотрели
      в край, тап терял): голова в клетку обзора чужого хвоста (sightSpots) либо
-     хвост под чужой луч (trapSpots), роли чередуются. Последнее слово — за
+     хвост на чужой путь (trapSpots), роли чередуются. Последнее слово — за
      настоящим raycast по итоговой доске. */
   const decoys = [];
   const see = shuffled(rnd, sightSpots(state, moves, cfg, forbidden, lv0, null));
@@ -665,10 +665,10 @@ export function generate(cfg) {
         const sp = pool.pop();
         const cells = build(sp, head);
         if (!cells) continue;
-        // обещание проверяется настоящим лучом: споты считались без соседей,
+        // обещание проверяется настоящим ходом: споты считались без соседей,
         // и ранняя обманка запросто перекрывает подлёт следующей
         const test = state.concat(decoys).concat([{ id: cfg._nextId, cells, decoy: true }]);
-        if (head) {                            // обещали законный ход — упирается ли луч в хвост
+        if (head) {                            // обещали законный ход — упирается ли он в хвост
           if (raycast(test, test.length - 1, cfg.w, cfg.h, brd).kind !== 'tail') continue;
         } else {                               // обещали съедобность — достаёт ли кто до её хвоста
           if (!tailSeen(test, moves, cfg, lv0, cfg._nextId)) continue;
@@ -678,7 +678,7 @@ export function generate(cfg) {
       }
       if (d) break;
     }
-    // роль не нашлась — бросок наугад, но из бросков берём тот, чей луч упирается
+    // роль не нашлась — бросок наугад, но из бросков берём тот, который упирается
     // в чужой хвост; подлёты чужих ловушек обходим (мебель и брак по markUse)
     if (!d) {
       const free = new Set(forbidden);
@@ -722,7 +722,7 @@ function planStates(start, moves, cfg, lv) {
 }
 
 // смотрит ли кто-то в хвост змеи id хоть на одном шагу решения (шипы без такого
-// луча — краска, это же меряет markUse)
+// никто не достаёт — краска, это же меряет markUse)
 function tailSeen(start, moves, cfg, lv, id) {
   const br = boardOf(lv);
   for (const state of planStates(start, moves, cfg, lv)) {
@@ -761,7 +761,7 @@ function sightSpots(start, moves, cfg, forbidden, lv, id) {
   return out;
 }
 
-// клетки, куда чей-нибудь луч долетает по ходу решения: хвост, поставленный
+// клетки, до которых кто-нибудь дотягивается по ходу решения: хвост, поставленный
 // туда, съедобен (или колюч — тогда соблазн-авария)
 function trapSpots(start, moves, cfg, forbidden, lv) {
   const out = [], seen = new Set();
@@ -772,7 +772,7 @@ function trapSpots(start, moves, cfg, forbidden, lv) {
       if (s.cells.length < 2 || s.sleep) continue;      // спящая никуда не смотрит
       let d = [s.cells[0][0] - s.cells[1][0], s.cells[0][1] - s.cells[1][1]];
       const own = br.turns.get(ck(s.cells[0]));         // голова в жёлобе: стенка держит и изнутри,
-      if (own) {                                        // такой луч не долетает никуда
+      if (own) {                                        // такой ход не доходит никуда
         const outSide = sideName(d);
         if (own[0] !== outSide && own[1] !== outSide) continue;
       }
@@ -783,7 +783,7 @@ function trapSpots(start, moves, cfg, forbidden, lv) {
         const t = br.turns.get(ck(c));
         if (t) {
           const from = sideName([-d[0], -d[1]]);
-          if (t[0] !== from && t[1] !== from) break;     // в спину поворота луч не пройдёт
+          if (t[0] !== from && t[1] !== from) break;     // в спину поворота не пройти
           d = SIDES[t[0] === from ? t[1] : t[0]];
         } else if (!forbidden.has(ck(c)) && !seen.has(ck(c))) {
           seen.add(ck(c)); out.push({ c: c.slice(), path: path.map((q) => q.slice()) });
@@ -809,8 +809,8 @@ export function verify(lv) {
     if (i < 0) return { ok: false, at: m, why: 'едок пропал' };
     if (state[i].sleep) return { ok: false, at: m, why: 'спящую заставили ходить' };
     const r = raycast(state, i, lv.w, lv.h, br);
-    if (r.kind !== 'tail') return { ok: false, at: m, why: 'луч не в хвост, а ' + r.kind };
-    if (state[r.prey].id !== mv.prey) return { ok: false, at: m, why: 'луч попал не в ту змею' };
+    if (r.kind !== 'tail') return { ok: false, at: m, why: 'ход не в хвост, а ' + r.kind };
+    if (state[r.prey].id !== mv.prey) return { ok: false, at: m, why: 'ход попал не в ту змею' };
     if (r.gap !== mv.gap) return { ok: false, at: m, why: `зазор ${r.gap} вместо ${mv.gap}` };
     state = applyEat(state, i, r);
   }

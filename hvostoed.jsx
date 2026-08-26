@@ -183,7 +183,7 @@ const RAW_LEVELS_INTRO = [
   },
   {
     // C5 · сид 181 · обеды безопасны 0.62 · starTop 0.26 · avgGap 1.08 · решений 1
-    name: "Сквозняк без окон", lesson: "Длинный луч через пустоту — это и подсказка, и ловушка.",
+    name: "Сквозняк без окон", lesson: "Длинный путь через пустоту — это и подсказка, и ловушка.",
     w: 7, h: 6, ceiling: 12,
     snakes: [
       { cells: [[5,0],[4,0]] },
@@ -275,7 +275,7 @@ const RAW_LEVELS_INTRO = [
   },
   {
     // E2 · сид 53 · обеды безопасны 0.67 · starTop 0.10 · avgGap 1.16 · решений 3
-    name: "Дальнобой", lesson: "Дальний хвост виден плохо. Проведи луч пальцем, если сомневаешься.",
+    name: "Дальнобой", lesson: "Дальний хвост виден плохо. Проведи путь пальцем, если сомневаешься.",
     w: 9, h: 10, ceiling: 22,
     snakes: [
       { cells: [[0,3],[0,4]] },
@@ -788,7 +788,7 @@ const RAW_LEVELS_VOID = [
     ],
   },
   {
-    name: "Уведи хвост", lesson: "Свой хвост можно убрать с чужого луча. Тогда луч найдёт добычу покрупнее.",
+    name: "Уведи хвост", lesson: "Свой хвост можно убрать с чужого пути. Тогда змея дойдёт до добычи покрупнее.",
     w: 7, h: 5, ceiling: 8,
     snakes: [
       { cells: [[1, 0], [0, 0]] },
@@ -1076,9 +1076,9 @@ function acceptCrafted(name, r, ordinal, cfg) {
   if (snakes.some((s) => s.apple)) мех.push("яблоко даёт +1");
   if (snakes.some((s) => s.spiky)) мех.push("колючую не съесть");
   if (snakes.some((s) => s.sleep && !s.apple)) мех.push("спящая не ходит");
-  if ((base.bridges || []).length) мех.push("над мостом луч проходит");
-  if ((base.turns || []).length) мех.push("поворот загибает луч");
-  if ((base.portals || []).length) мех.push("портал уносит луч");
+  if ((base.bridges || []).length) мех.push("над мостом змея проходит");
+  if ((base.turns || []).length) мех.push("поворот загибает путь");
+  if ((base.portals || []).length) мех.push("портал уносит змею");
   // верхняя отметка = длина плана, достижима по построению (walkSids подтвердил)
   const marks = marksOf(target, Math.max(...snakes.map((sn) => sn.cells.length)));
   return { ...base, mode: "goal", ceiling: target, marks, target: marks[0], plan: sids,
@@ -1158,7 +1158,7 @@ const SECTION_LEVELS = [
   },
   {
     // A3 · сид 9 · ловушек 0 · безопасность обедов 1.00 1.00 · финал 11
-    name: "Тук-тук", lesson: "Закрытая комната — стена: луч в неё бьётся, как о валун.",
+    name: "Тук-тук", lesson: "Закрытая комната — стена: змея в неё упирается, как в валун.",
     w: 5, h: 10,
     sections: [
       { x: 0, y: 0, w: 5, h: 5, snakes: [
@@ -2205,7 +2205,7 @@ function occMap(snakes) {
   return m;
 }
 
-// мост: луч всегда проходит НАД клеткой (занятость не читается), пересечься
+// мост: змея всегда проходит НАД клеткой (занятость не читается), пересечься
 // змеи могут только тут; хвост на мосту с этого направления не съесть
 function raycast(snakes, sid, W, H, board) {
   const s = snakes.find((q) => q.id === sid);
@@ -2213,9 +2213,9 @@ function raycast(snakes, sid, W, H, board) {
   const occ = occMap(snakes);
   let [x, y] = s.cells[0];
   const gap = [];
-  /* Голова может лежать на плитке поворота — луч рождается внутри жёлоба, а цикл
+  /* Голова может лежать на плитке поворота — змея трогается изнутри жёлоба, а цикл
      клетку головы не читает. Без этой проверки стенка держала только снаружи
-     (обед сквозь стену, жалоба игрока). Гнуть нечего: у такого луча нет стороны
+     (обед сквозь стену, жалоба игрока). Гнуть нечего: у такого хода нет стороны
      входа — открытая сторона выпускает, закрытая останавливает. */
   const own = board.turns.get(ckey(x, y));
   if (own) {
@@ -2249,7 +2249,7 @@ function raycast(snakes, sid, W, H, board) {
     // его перекрывает. Встаём на клетку ПЕРЕД выходом: выход читается как обычная.
     const g = board.gates && board.gates.get(ckey(x, y));
     if (g) { gap.push([x, y]); x = g[0] - dx; y = g[1] - dy; continue; }
-    // клетка пуста и открыта — поворот гнёт луч (спину проверили выше)
+    // клетка пуста и открыта — поворот гнёт ход (спину проверили выше)
     if (t) [dx, dy] = SIDES[t[0] === from ? t[1] : t[0]];
     gap.push([x, y]);
   }
@@ -2373,7 +2373,7 @@ function planLongest(level, snakes, board) {
   return path;
 }
 
-/* Может ли змея ещё вырасти — точный ответ (вылет не растит, но открывает лучи;
+/* Может ли змея ещё вырасти — точный ответ (вылет не растит, но открывает дорогу;
    змей строго меньше с каждым ходом — обход конечен). Бюджет исчерпан → «может»:
    закончить партию рано хуже, чем дать лишний ход. beam-ширина 160 в planLongest
    даёт то же, что 320, на всех замеренных полях. */
@@ -2417,7 +2417,7 @@ function buildLaunchMove(snakes, sid, ray) {
   const s = snakes.find((q) => q.id === sid);
   const n0 = s.cells.length;
   const [dx, dy] = ray.dir;
-  const pathCells = ray.gap.map((c) => c.slice());     // луч мог гнуться в поворотах
+  const pathCells = ray.gap.map((c) => c.slice());     // путь мог гнуться в поворотах
   let [x, y] = pathCells.length ? pathCells[pathCells.length - 1] : s.cells[0];
   for (let i = 0; i < n0 + 1; i++) { x += dx; y += dy; pathCells.push([x, y]); }
   return {
@@ -2444,14 +2444,14 @@ function buildLaunchMove(snakes, sid, ray) {
    final/finalId — эталон рисунка, autoTiles — плитки, рождённые пяткой. */
 
 const HAND_WHY = {
-  self: "луч упирается в своё же тело",
-  rock: "луч упирается в валун",
-  edge: "луч уходит за край поля",
-  head: "луч упирается в чужую голову",
-  body: "луч упирается в чужое тело",
+  self: "змея упирается в своё же тело",
+  rock: "змея упирается в валун",
+  edge: "змея уходит за край поля",
+  head: "змея упирается в чужую голову",
+  body: "змея упирается в чужое тело",
   spikyTail: "хвост жертвы колючий",
-  turnBack: "луч бьётся в стенку поворота",
-  loop: "луч замкнулся в кольце порталов",
+  turnBack: "змея бьётся в стенку поворота",
+  loop: "ход замкнулся в кольце порталов",
 };
 
 const edEmpty = (w, h) => ({ w, h, rocks: [], bridges: [], turns: [], portals: [],
@@ -2470,7 +2470,7 @@ const edFloorAt = (ed, [x, y]) =>
   ed.turns.some((c) => c[0] === x && c[1] === y) ||
   ed.portals.some((p) => (p[0] === x && p[1] === y) || (p[2] === x && p[3] === y));
 
-// прогон плана механикой игры — источник правды: луч обязан съесть задуманную
+// прогон плана механикой игры — источник правды: ход обязан съесть задуманную
 // жертву, а последний обед — собрать в точности нарисованную змею
 function edRun(ed) {
   const bd = boardOf(ed);
@@ -2484,7 +2484,7 @@ function edRun(ed) {
     if (s.sleep) return flunk("спящая не ходит");
     const ray = raycast(sn, mv.sid, ed.w, ed.h, bd);
     if (ray.kind !== "tail") return flunk(HAND_WHY[ray.kind] || "ход не выходит");
-    if (ray.target !== mv.prey) return flunk("луч перехватила другая змея");
+    if (ray.target !== mv.prey) return flunk("ход перехватила другая змея");
     rays.push({ from: s.cells[0].slice(), ray });
     sn = applyEat(sn, mv.sid, ray);
     states.push(sn);
@@ -2497,7 +2497,7 @@ function edRun(ed) {
   return { states, rays };
 }
 
-// тень решения: клетки, по которым летят лучи плана, и клетки, где они
+// тень решения: клетки, по которым идут ходы плана, и клетки, где они
 // останавливаются (хвосты жертв); сюда обманкам и полу хода нет
 function edShadow(run) {
   const beam = new Set(), stop = new Set();
@@ -2584,7 +2584,7 @@ function edCutTurn(ed, sid, b) {
 /* Пятка: голова сходит на tails.length клеток своего тела (они освобождаются
    под зазор), хвост дорастает клетками tails. Изгибы зазора собираются в
    предложение плиток — ставит их игрок кнопкой; на бывшей голове плитка не
-   нужна никогда (луч приходит тем же направлением, каким уходил). */
+   нужна никогда (змея приходит тем же направлением, каким уходила). */
 function edRetreat(ed, sid, tails) {
   const A = ed.snakes.find((s) => s.id === sid);
   const k = tails.length;
@@ -2612,7 +2612,7 @@ function edRetreat(ed, sid, tails) {
   return { ed: next, tiles: bendOk ? tiles : null, freed: A.cells.slice(0, k) };
 }
 
-// обратный шаг пятки: голова наползает на первую клетку луча, хвост втягивается;
+// обратный шаг пятки: голова наползает на первую клетку пути, хвост втягивается;
 // пяточная плитка снимается, ручные остаются
 function edAdvance(ed, sid) {
   const A = ed.snakes.find((s) => s.id === sid);
@@ -2698,7 +2698,7 @@ function edPortalTap(ed, from, x, y) {
   return { ed: { ...ed, portals: [...ed.portals, [from[0], from[1], x, y]] } };
 }
 
-// живая обманка: есть обед или хвост под чьим-то лучом (колючий — тоже);
+// живая обманка: есть обед или хвост на чьём-то пути (колючий — тоже);
 // мёртвая — мебель, в песочнице это пометка, не запрет
 function edLively(ed) {
   const sn = clone(ed.snakes), bd = boardOf(ed);
@@ -2815,7 +2815,7 @@ function angleAt(P, s) {
 
 /* ---------- отрисовка ---------- */
 // мост и поворот — в два слоя: настил/жёлоб под змеями, скобы/стенки ПОВЕРХ —
-// стенка держит луч даже под лежащей змеёй, невидимой ей быть нельзя
+// стенка держит ход даже под лежащей змеёй, невидимой ей быть нельзя
 function TurnFloor({ x, y, a, b }) {
   const cx = x * CS + CS / 2, cy = y * CS + CS / 2, R = 46;
   const mid = (sd) => [cx + SIDES[sd][0] * R, cy + SIDES[sd][1] * R];
@@ -2890,7 +2890,7 @@ function Gate({ x, y, into, pair }) {
         fill={into ? "#241C3A" : "#EDE7FA"} />
       <circle cx={cx} cy={cy} r="30" fill="none" stroke={rim} strokeWidth="8" />
       {/* середина у обоих ПУСТАЯ: сплошная заливка на выходе читалась пуговицей,
-          а не отверстием, из которого луч выходит */}
+          а не отверстием, из которого змея выходит */}
       <circle cx={cx} cy={cy} r="14" fill={into ? "#0F0A1C" : "#FFFDF4"}
         stroke={into ? "none" : rim} strokeWidth="5" />
       <g fill="none" stroke={rim} strokeWidth="7" strokeLinecap="round" strokeLinejoin="round">
@@ -3028,7 +3028,7 @@ function SnakeView({ snake, shaking, onTap, regRef }) {
 
 function RayView({ ray, from, color }) {
   const [hx, hy] = toPx(from);
-  // луч может гнуться в поворотах, поэтому рисуем ломаную по его собственным клеткам
+  // путь может гнуться в поворотах, поэтому рисуем ломаную по его собственным клеткам
   const pts = [[hx, hy], ...ray.gap.map(([x, y]) => [x * CS + CS / 2, y * CS + CS / 2])];
   const tail = pts[pts.length - 1];
   // упор в стенку СВОЕЙ плитки: крестик на стенке (46 — там её рисует TurnWalls),
@@ -3038,7 +3038,7 @@ function RayView({ ray, from, color }) {
     ? (own ? [hx + ray.dir[0] * 46, hy + ray.dir[1] * 46]
            : [ray.hitCell[0] * CS + CS / 2, ray.hitCell[1] * CS + CS / 2])
     : null;
-  const back = own ? 0 : 34;                    // упор луча не доходит до центра преграды
+  const back = own ? 0 : 34;                    // упор пути не доходит до центра преграды
   const x2 = mark ? mark[0] - ray.dir[0] * back : tail[0] + ray.dir[0] * CS * 0.62;
   const y2 = mark ? mark[1] - ray.dir[1] * back : tail[1] + ray.dir[1] * CS * 0.62;
   pts.push([x2, y2]);
@@ -3110,7 +3110,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
   const rafRef = useRef(null);
   const fxTimerRef = useRef(null);
   const crashTimerRef = useRef(null);
-  // закрытая комната для луча — валун: авария, не вылет
+  // закрытая комната для змеи — валун: авария, не вылет
   const board = useMemo(() => {
     const b = boardOf(level);
     if (isSec) for (let k = open; k < level.sections.length; k++) {
@@ -3365,7 +3365,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
       // в комнатах валунов нет — любой «валун» это крышка закрытой комнаты
       crash(isSec ? Nom + " змея уткнулась в закрытую комнату." : Nom + " змея врезалась в валун.", sid, ray, s.cells[0]);
     } else if (ray.kind === "loop") {
-      crash(Nom + " змея загнала луч в кольцо порталов — выхода нет.", sid, ray, s.cells[0]);
+      crash(Nom + " змея ушла в кольцо порталов — выхода нет.", sid, ray, s.cells[0]);
     } else if (ray.kind === "turnBack") {
       crash(Nom + " змея ткнулась в стенку поворота — с этой стороны глухо.", sid, ray, s.cells[0]);
     } else if (ray.kind === "spikyTail") {
@@ -3738,7 +3738,7 @@ const CRAFT_KNOBS = [
   { k: "bridges", nom: "Мостов",         min: 0, max: 4 },
   { k: "turns",  nom: "Поворотов",           min: 0, max: 8 },
   { k: "portals", nom: "Порталов",        min: 0, max: (c) => Math.max(0, Math.floor(c.len / 3) - 1),
-    hint: "вход и выход: луч ныряет и выходит тем же направлением" },
+    hint: "вход и выход: змея ныряет и выходит тем же направлением" },
   { k: "mechs",  nom: "Механик на уровень", min: 0, max: 6 },
 ];
 // порядок как у ручек: потолок снимает лишние с конца — «снялись нижние»
@@ -3944,8 +3944,8 @@ function HandCraft({ ordinal, onSave, onExit }) {
   const lively = useMemo(() => edLively(ed), [ed]);
   const occSet = useMemo(() => edOccSet(ed), [ed]);
   const rockSet = useMemo(() => edRockSet(ed), [ed]);
-  // клетки, закрытые для обманок: лучи и стоп-клетки решения; мост запрет снимает —
-  // луч летит над ним, и генератор сажает обманок ровно туда же
+  // клетки, закрытые для обманок: пути и стоп-клетки решения; мост запрет снимает —
+  // змея проходит над ним, и генератор сажает обманок ровно туда же
   const shadowSet = useMemo(() => {
     const s = new Set([...shadow.beam, ...shadow.stop]);
     for (const [x, y] of ed.bridges) s.delete(ckey(x, y));
@@ -4038,7 +4038,7 @@ function HandCraft({ ordinal, onSave, onExit }) {
 
   function onCut(c) {
     if (c.needTurn) {
-      setPend({ ed: c.ed, tiles: [c.tile], why: "Разрез на изгибе: лучу нужен поворот." });
+      setPend({ ed: c.ed, tiles: [c.tile], why: "Разрез на изгибе: ходу нужен поворот." });
       return;
     }
     commit(c.ed);
@@ -4134,7 +4134,7 @@ function HandCraft({ ordinal, onSave, onExit }) {
         autoTiles: [...r.ed.autoTiles, ...r.tiles.map(([x, y]) => ckey(x, y))] };
       if (edRun(withT).bad == null) {
         if (dr.base !== ed) { setUndoS((u) => [...u.slice(-79), dr.base]); setRedoS([]); }
-        setPend({ ed: withT, tiles: r.tiles, why: "Луч гнётся на зазоре: нужен поворот." });
+        setPend({ ed: withT, tiles: r.tiles, why: "Путь гнётся на зазоре: нужен поворот." });
         dragRef.current = null;
         return;
       }
@@ -4206,7 +4206,7 @@ function HandCraft({ ordinal, onSave, onExit }) {
     ? "Нарисуй финальную змею пальцем — от головы к хвосту. Это итог партии: игрок соберёт её клетка в клетку."
     : tool === "decoy" ? "Рисуй обманку по свободным клеткам: тень решения для неё закрыта, мост — открыт."
     : tool === "rock" ? "Валун ставится тапом на пустую клетку вне тени. Повторный тап снимает."
-    : tool === "bridge" ? "Мост можно класть прямо на луч решения: над ним луч пролетает, а на сам мост сядет обманка."
+    : tool === "bridge" ? "Мост можно класть прямо на путь решения: над ним змея проходит, а на сам мост сядет обманка."
     : tool === "turn" ? "Плитка ставится тапом; тапы по ней крутят жёлоб, последний — снимает."
     : tool === "portal" ? "Два тапа: вход и выход. Тап по готовому порталу снимает пару."
     : !ed.plan.length ? "Тапни по змее и выбери засечку: разрез — это последний ход решения, играться он будет первым с конца."
