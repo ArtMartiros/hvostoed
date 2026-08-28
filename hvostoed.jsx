@@ -1556,7 +1556,6 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
       const mv = buildLaunchMove(snakes, sid, ray);
       setHistory((hh) => [...hh, { snakes: clone(snakes), runBest }]);
       setLog((l) => [...l, sid]);
-      setLaunched((n) => n + 1);
       runMove(mv);
     } else if (ray.kind === "self") {
       crash(Nom + " змея смотрит на собственный хвост — уроборос запрещён.", sid, ray, s.cells[0]);
