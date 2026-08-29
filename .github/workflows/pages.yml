@@ -34,6 +34,8 @@ jobs:
         run: node plancheck.mjs 4
       - name: Правило конца партии
         run: node ending.mjs hvostoed.jsx
+      - name: Пак «Комнаты» — игра проходит решение каждого уровня
+        run: node roomscheck.mjs
 
   build:
     name: Сборка
