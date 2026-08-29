@@ -1138,10 +1138,48 @@ ${c.snakes.map((sn) => "      { " + (sn.spiky ? "spiky: true, " : "") + (sn.appl
     ],
   },   // пресет ${c.preset}, сид ${c.seed}`;
 
+/* ---------- комнаты (прототип) ----------
+   Доска разбита на квадраты-комнаты, открыт один. Собери всех змей открытой
+   области в ОДНУ — откроется следующая комната со своими змеями, и большая
+   змея продолжает расти. Ошибки бесплатны: любой неверный тап (авария, взгляд
+   за край) не меняет доску и лишь крутит счётчик. Вылетов в режиме нет — все
+   змеи входят в решение. Уровень собран вручную и проверен полным перебором
+   на стенде (дизайн-скрипт scratchpad/design.mjs): в каждой комнате финальная
+   змея ЕДИНСТВЕННА при любом порядке сборки — иначе выбор в первой комнате
+   мог бы невидимо запереть третью. Замер стенда: безопасность обедов по
+   комнатам 1.00 · 0.67 · 0.56 · 0.38 — кривая на одном уровне. */
+const SECTION_LEVELS = [
+  {
+    name: "Четыре комнаты",
+    lesson: "Собери всех змей комнаты в одну — откроется следующая. Ошибки бесплатны.",
+    w: 12, h: 12,
+    sections: [
+      { x: 0, y: 0, w: 6, h: 6, snakes: [
+        { cells: [[1, 2], [0, 2]] }, { cells: [[3, 1], [3, 2]] }, { cells: [[4, 0], [3, 0]] } ] },
+      { x: 6, y: 0, w: 6, h: 6, snakes: [
+        { cells: [[7, 1], [7, 0]] }, { cells: [[7, 4], [7, 3]] } ] },
+      { x: 6, y: 6, w: 6, h: 6, snakes: [
+        { cells: [[8, 7], [7, 7]] }, { cells: [[9, 8], [9, 7]] }, { cells: [[8, 10], [9, 10]] } ] },
+      { x: 0, y: 6, w: 6, h: 6, snakes: [
+        { cells: [[4, 9], [4, 10]] }, { cells: [[3, 7], [4, 7]] }, { cells: [[1, 8], [1, 7]] } ] },
+    ],
+  },
+];
+const buildSections = (raw) => raw.map((lv, i) => {
+  let ci = 0;
+  const sections = lv.sections.map((sec) => ({ ...sec,
+    snakes: sec.snakes.map((sn) => ({ id: "s" + ci, color: ORDER[ci++ % ORDER.length],
+      spiky: false, sleep: false, apple: false, cells: sn.cells })) }));
+  return { ...lv, id: i, mode: "sections", marks: [], ceiling: 0,
+    rocks: [], bridges: [], turns: [], portals: [],
+    sections, snakes: sections[0].snakes };
+});
+
 const PACKS = [
   { id: "intro", name: "Азбука", note: "30 уровней · с нуля, без ловушек-обманок", levels: buildPack(RAW_LEVELS_INTRO) },
   { id: "void", name: "Пустота", note: "19 уровней · только змеи", levels: buildPack(RAW_LEVELS_VOID) },
   { id: "classic", name: "Кампания", note: "25 уровней · валуны и колючие", levels: buildPack(RAW_LEVELS) },
+  { id: "rooms", name: "Комнаты", note: "прототип · доска открывается по квадратам", levels: buildSections(SECTION_LEVELS) },
 ];
 
 /* ---------- логика (идентична солверу) ---------- */
@@ -1732,6 +1770,10 @@ function RayView({ ray, from, color }) {
 /* ---------- игра ---------- */
 function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare }) {
   const isRec = level.mode === "record";
+  const isSec = level.mode === "sections";
+  const [open, setOpen] = useState(1);        // сколько комнат открыто
+  const [errors, setErrors] = useState(0);    // счётчик ошибок: жизни бесконечны
+  const checkpointRef = useRef(null);         // состояние на миг открытия комнаты
   const [snakes, setSnakes] = useState(() => clone(level.snakes));
   const [runBest, setRunBest] = useState(() => maxLen(level.snakes));
   const [hints, setHints] = useState(0);
@@ -1758,7 +1800,16 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
   const rafRef = useRef(null);
   const fxTimerRef = useRef(null);
   const crashTimerRef = useRef(null);
-  const board = useMemo(() => boardOf(level), [level]);
+  /* Закрытые комнаты для луча — сплошной валун: авария, а не вылет. Терять
+     массу о стену, которая скоро исчезнет, было бы несправедливо. */
+  const board = useMemo(() => {
+    const b = boardOf(level);
+    if (isSec) for (let k = open; k < level.sections.length; k++) {
+      const r = level.sections[k];
+      for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) b.rocks.add(ckey(x, y));
+    }
+    return b;
+  }, [level, open]);
   const reduced = useMemo(
     () => typeof window !== "undefined" && window.matchMedia &&
           window.matchMedia("(prefers-reduced-motion: reduce)").matches, []
@@ -1771,12 +1822,13 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
   // можно потерять на выпусках, не потеряв эту звезду: обед массу сохраняет, теряет
   // её только вылет. Без этого числа на бюджетных уровнях не сыграть.
   const onBoard = snakes.reduce((a, s) => a + s.cells.length, 0);
-  const aim = isRec ? null : (level.marks.find((m) => m > best) || level.ceiling);
-  const hasBudget = !isRec && level.snakes.reduce((a, s) => a + s.cells.length, 0) > level.marks[0];
+  const aim = isRec || isSec ? null : (level.marks.find((m) => m > best) || level.ceiling);
+  const hasBudget = !isRec && !isSec && level.snakes.reduce((a, s) => a + s.cells.length, 0) > level.marks[0];
   const slack = onBoard - aim;
   const idle = phase === "idle";
   const canEatAny = idle && snakes.some((s) => !s.sleep && raycast(snakes, s.id, level.w, level.h, board).kind === "tail");
-  const canLaunchAny = idle && snakes.some((s) => !s.sleep && raycast(snakes, s.id, level.w, level.h, board).kind === "edge");
+  const canLaunchAny = !isSec && idle && snakes.some((s) => !s.sleep && raycast(snakes, s.id, level.w, level.h, board).kind === "edge");
+  const secStuck = isSec && idle && !canEatAny && snakes.length > 1;
 
   function showFx(next, ms) {
     clearTimeout(fxTimerRef.current);
@@ -1796,6 +1848,28 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     }
     const ml = maxLen(mv.finalSnakes);
     if (ml > runBest) { setRunBest(ml); if (isRec && hintsRef.current === 0) onRecord(ml); }
+    /* Комнаты: одна змея в открытой области — комната собрана. Либо открываем
+       следующую (её змеи доезжают на доску, открытие — чекпоинт: история
+       чистится, отмотки назад через границу нет), либо доска собрана целиком. */
+    if (isSec) {
+      if (mv.finalSnakes.length === 1) {
+        if (open < level.sections.length) {
+          const merged = mv.finalSnakes.concat(clone(level.sections[open].snakes));
+          checkpointRef.current = clone(merged);
+          setSnakes(merged);
+          setOpen(open + 1);
+          setHistory([]);
+          setToast(open + 1 === level.sections.length ? "Последняя комната открыта!" : "Комната открыта!");
+        } else {
+          setWonInfo({ len: ml, stars: 3, errors });
+          setPhase("won");
+          onWin(3);
+          return;
+        }
+      }
+      setPhase("idle");
+      return;
+    }
     /* Смерть по массе. Обед массу сохраняет, теряется она только на вылете, а нижняя
        отметка по построению не больше стартовой массы. Значит «клеток на поле меньше
        нижней отметки» — ТОЧНЫЙ признак проигрыша за одно сложение, без перебора; он
@@ -1846,6 +1920,11 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
       crashTimerRef.current = setTimeout(() => setPhase("idle"), 420);
       return;
     }
+    if (isSec) {                       // в комнатах ошибка бесплатна: доска не тронута, крутится счётчик
+      setErrors((e) => e + 1);
+      crashTimerRef.current = setTimeout(() => { setPhase("idle"); setFx(null); }, 650);
+      return;
+    }
     setCrashed(true);
     setLostReason(reason);
     crashTimerRef.current = setTimeout(() => setPhase("lost"), 700);
@@ -1886,7 +1965,9 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     const t0 = performance.now();
 
     const frame = (now) => {
-      const p = Math.min(1, (now - t0) / dur);
+      // rAF передаёт время начала кадра — оно бывает РАНЬШЕ t0, снятого при
+      // старте анимации; отрицательный p давал индекс −1 и NaN ронял кадр
+      const p = Math.min(1, Math.max(0, (now - t0) / dur));
       const u = mv.kind === "launch"
         ? pathLen * (0.3 * p + 0.7 * p * p)
         : pathLen * p;
@@ -1951,6 +2032,9 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
       setHistory((hh) => [...hh, { snakes: clone(snakes), runBest }]);
       setLog((l) => [...l, sid]);
       runMove(mv);
+    } else if (ray.kind === "edge" && isSec) {
+      // вылетов в комнатах нет: все змеи нужны, взгляд за край — ошибка, доска не меняется
+      crash(Nom + " змея улетела бы с доски — здесь так нельзя, каждая змея нужна.", sid, ray, s.cells[0]);
     } else if (ray.kind === "edge") {
       const mv = buildLaunchMove(snakes, sid, ray);
       setHistory((hh) => [...hh, { snakes: clone(snakes), runBest }]);
@@ -1959,7 +2043,8 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     } else if (ray.kind === "self") {
       crash(Nom + " змея смотрит на собственный хвост — уроборос запрещён.", sid, ray, s.cells[0]);
     } else if (ray.kind === "rock") {
-      crash(Nom + " змея врезалась в валун.", sid, ray, s.cells[0]);
+      // в комнатах валунов нет — любой «валун» это крышка закрытой комнаты
+      crash(isSec ? Nom + " змея уткнулась в закрытую комнату." : Nom + " змея врезалась в валун.", sid, ray, s.cells[0]);
     } else if (ray.kind === "loop") {
       crash(Nom + " змея загнала луч в кольцо порталов — выхода нет.", sid, ray, s.cells[0]);
     } else if (ray.kind === "turnBack") {
@@ -1992,6 +2077,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
 
   function hint() {
     if (phase !== "idle") return;
+    if (isSec) { setToast("В комнатах подсказки пока нет — прототип."); return; }
     const k = stateKey(snakes);
     let sid = made().get(k);
     if (sid == null) sid = planRef.current.get(k);
@@ -2030,8 +2116,17 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     setFx(null); setToast(null); setPlus(null);
   }
 
+  function roomAgain() {              // рестарт КОМНАТЫ: откат к чекпоинту открытия, счётчик ошибок живёт
+    if (phase === "anim") return;
+    setSnakes(clone(checkpointRef.current || level.snakes));
+    setHistory([]);
+    setPhase("idle"); setWonInfo(null); setLostReason(null); setCrashed(false);
+    setFx(null); setToast(null); setPlus(null);
+  }
+
   function restart() {
     if (phase === "anim") return;
+    setOpen(1); setErrors(0); checkpointRef.current = null;
     clearTimeout(crashTimerRef.current);
     setSnakes(clone(level.snakes)); setHistory([]); setLog([]); setRunBest(maxLen(level.snakes));
     hintsRef.current = 0; setHints(0); planRef.current = new Map();
@@ -2076,7 +2171,15 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
         </button>
       </header>
 
-      {isRec ? (
+      {isSec ? (
+        <div className="hv-goalrow">
+          <span className="hv-goal">Комната {open} / {level.sections.length}</span>
+          <div className="hv-bar" role="progressbar" aria-valuenow={open} aria-valuemax={level.sections.length}>
+            <div className="hv-fill" style={{ width: (open / level.sections.length) * 100 + "%" }} />
+          </div>
+          <span className="hv-count">длина {best} · ошибок {errors}</span>
+        </div>
+      ) : isRec ? (
         <div className="hv-goalrow">
           <span className="hv-goal rec">Рекорд {Math.max(record || 0, runBest)}</span>
           <div className="hv-bar" role="progressbar" aria-valuenow={runBest} aria-valuemax={level.ceiling}>
@@ -2113,6 +2216,14 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
           </defs>
           <rect x="0" y="0" width={W} height={H} rx="20" fill="#ECF2DE" />
           {cells}
+          {isSec && level.sections.slice(open).map((r, k) => (
+            <g key={"lid" + (open + k)}>
+              <rect x={r.x * CS + 4} y={r.y * CS + 4} width={r.w * CS - 8} height={r.h * CS - 8}
+                rx="18" fill="#41544A" stroke="#31413A" strokeWidth="3" />
+              <text x={r.x * CS + (r.w * CS) / 2} y={r.y * CS + (r.h * CS) / 2 + 16}
+                textAnchor="middle" fontSize="46" fontWeight="700" fill="#5E7568">?</text>
+            </g>
+          ))}
           {(level.turns || []).map(([x, y, a, b]) => <TurnFloor key={"t" + x + "-" + y} x={x} y={y} a={a} b={b} />)}
           {(level.portals || []).map(([x, y, u, v], i) => (
             <g key={"g" + i}>
@@ -2146,18 +2257,23 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
         {phase === "won" && wonInfo && (
           <div className="hv-overlay">
             <div className="hv-card">
-              <div className="hv-stars">
-                {[0, 1, 2].map((i) => (
-                  <Star key={i} size={34} className="hv-star" style={{ animationDelay: i * 0.12 + "s" }}
-                    fill={i < wonInfo.stars ? "#EFAF3C" : "none"}
-                    color={i < wonInfo.stars ? "#EFAF3C" : "#57685A"} />
-                ))}
-              </div>
-              <div className="hv-wontitle">Уровень пройден</div>
+              {!isSec && (
+                <div className="hv-stars">
+                  {[0, 1, 2].map((i) => (
+                    <Star key={i} size={34} className="hv-star" style={{ animationDelay: i * 0.12 + "s" }}
+                      fill={i < wonInfo.stars ? "#EFAF3C" : "none"}
+                      color={i < wonInfo.stars ? "#EFAF3C" : "#57685A"} />
+                  ))}
+                </div>
+              )}
+              <div className="hv-wontitle">{isSec ? "Доска собрана!" : "Уровень пройден"}</div>
               <div className="hv-wonsub">
-                Длина змеи: {wonInfo.len} из {level.ceiling}
-                {wonInfo.next ? " · до следующей отметки не хватило " + (wonInfo.next - wonInfo.len)
-                  : " — это потолок поля, больше тут не вырасти"}
+                {isSec
+                  ? "Все комнаты открыты и съедены. Длина змеи: " + wonInfo.len +
+                    (wonInfo.errors ? " · ошибок по пути: " + wonInfo.errors : " · без единой ошибки!")
+                  : "Длина змеи: " + wonInfo.len + " из " + level.ceiling +
+                    (wonInfo.next ? " · до следующей отметки не хватило " + (wonInfo.next - wonInfo.len)
+                      : " — это потолок поля, больше тут не вырасти")}
               </div>
               <div className="hv-btnrow">
                 <button className="hv-btn ghost good" onClick={() => send(0)}><Star size={14} /> Нравится</button>
@@ -2241,6 +2357,11 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
       <footer className="hv-foot">
         {toast ? (
           <div className="hv-toast">{toast}</div>
+        ) : secStuck ? (
+          <div className="hv-toast warn">
+            Комната заперта — никто никого не достаёт.
+            <button className="hv-endbtn" onClick={roomAgain}>Комнату заново</button>
+          </div>
         ) : stuckMsg ? (
           <div className="hv-toast warn">
             {stuckMsg}
@@ -2531,6 +2652,8 @@ function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft
                 <span className="hv-lvmeta">
                   {lv.w}×{lv.h} · {lv.mode === "record"
                     ? lv.snakes.length + " змей · рекорд " + rec + (lv.proof === "beam" ? ", машина " : " из ") + lv.ceiling
+                    : lv.mode === "sections"
+                    ? lv.sections.length + " комнаты · собери всех в одну"
                     : "отметки " + lv.marks.join(" · ")}{pack.craft ? " · " + lv.preset : ""}
                 </span>
               </span>
@@ -2542,6 +2665,8 @@ function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft
                     <span className="hv-mini" role="button" tabIndex={0}
                       onClick={(e) => { e.stopPropagation(); onDrop("drop", lv.id); }}><Trash2 size={14} /></span>
                   </>
+                ) : lv.mode === "sections" ? (
+                  <span style={{ color: "#EFAF3C", fontWeight: 700, fontSize: 18 }}>{got ? "✓" : ""}</span>
                 ) : [0, 1, 2].map((i) => (
                   <Star key={i} size={14}
                     fill={i < got ? "#EFAF3C" : "none"}
