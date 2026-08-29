@@ -2653,7 +2653,7 @@ function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft
                   {lv.w}×{lv.h} · {lv.mode === "record"
                     ? lv.snakes.length + " змей · рекорд " + rec + (lv.proof === "beam" ? ", машина " : " из ") + lv.ceiling
                     : lv.mode === "sections"
-                    ? lv.sections.length + " комнаты · собери всех в одну"
+                    ? lv.sections.length + " " + plural(lv.sections.length, "комната", "комнаты", "комнат") + " · собери всех в одну"
                     : "отметки " + lv.marks.join(" · ")}{pack.craft ? " · " + lv.preset : ""}
                 </span>
               </span>
