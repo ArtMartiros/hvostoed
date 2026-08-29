@@ -29,7 +29,7 @@ function trueCanGrow(level, snakes, board, base) {
 }
 
 let bad = 0, states = 0, ends = 0, over = 0;   // over — сколько раз жадность переросла потолок
-for (const packName of ['RAW_LEVELS', 'RAW_LEVELS_VOID']) {
+for (const packName of ['RAW_LEVELS', 'RAW_LEVELS_VOID', 'RAW_LEVELS_INTRO']) {
   const levels = grab(packName);
   console.log(`\n### ${packName}`);
   levels.forEach((lv, li) => {

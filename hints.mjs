@@ -6,7 +6,7 @@ const to = src.indexOf('function buildEatMove');
 const logic = src.slice(from, to);
 const grab = (n) => { const i = src.indexOf(`const ${n} = [`); const j = src.indexOf('\n];', i);
   return eval(src.slice(i + `const ${n} = `.length, j + 3)); };
-const PACKS = [['ПУСТОТА', grab('RAW_LEVELS_VOID')], ['КАМПАНИЯ', grab('RAW_LEVELS')]];
+const PACKS = [['АЗБУКА', grab('RAW_LEVELS_INTRO')], ['ПУСТОТА', grab('RAW_LEVELS_VOID')], ['КАМПАНИЯ', grab('RAW_LEVELS')]];
 const M = eval(logic + '\n({ raycast, applyEat, maxLen, stateKey, legalMoves, planGoal, planLongest, ckey })');
 
 const boardOf = (lv) => ({
