@@ -3,6 +3,17 @@ import react from "@vitejs/plugin-react";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { execSync } from "node:child_process";
+
+/* Версия сборки для меню: дата и короткий хеш коммита, вшиваются на этапе
+   сборки. Смысл один: service worker обновляет игру молча, и без видимой
+   версии не понять, приехало обновление или смотришь на старый кэш. Руками
+   версию не поднять и не забыть — она берётся из git самой сборкой. */
+function buildStamp() {
+  let s = new Date().toISOString().slice(0, 10);
+  try { s += " · " + execSync("git rev-parse --short HEAD").toString().trim(); } catch (e) { /* без git — только дата */ }
+  return s;
+}
 
 /* Service worker пишется плагином, а не руками, по одной причине: список файлов
    для предзагрузки должен содержать РЕАЛЬНОЕ имя бандла с хешем, а оно известно
@@ -77,6 +88,7 @@ self.addEventListener("fetch", (e) => {
 export default defineConfig({
   // Проектная страница GitHub Pages живёт в подпапке /hvostoed/, поэтому база не корневая.
   base: "/hvostoed/",
+  define: { __HV_BUILD__: JSON.stringify(buildStamp()) },
   plugins: [react(), serviceWorker()],
   server: {
     port: Number(process.env.PORT) || 5173,
