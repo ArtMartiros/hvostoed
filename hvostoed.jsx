@@ -2414,7 +2414,7 @@ function AppleView({ snake, shaking, onTap, regRef }) {
   );
 }
 
-function SnakeView({ snake, shaking, popping, onTap, regRef }) {
+function SnakeView({ snake, shaking, onTap, regRef }) {
   const C = COLORS[snake.color];
   const pts = snake.cells.map(toPx);
   const d = dStr(pts);
@@ -2464,7 +2464,7 @@ function SnakeView({ snake, shaking, popping, onTap, regRef }) {
   return (
     <g ref={(n) => { if (n) regRef.current[snake.id] = n; else delete regRef.current[snake.id]; }}
        data-sid={snake.id}
-       className={"hv-snake" + (shaking ? " hv-shake" : "") + (popping ? " hv-pop" : "")} style={{ cursor: "pointer" }}
+       className={"hv-snake" + (shaking ? " hv-shake" : "")} style={{ cursor: "pointer" }}
        onPointerDown={(e) => { e.stopPropagation(); onTap(snake.id); }}>
       {hasBody && <path data-part="outline" d={d} fill="none" stroke={C.dark} strokeWidth="70" strokeLinecap="round" strokeLinejoin="round" />}
       {hasBody && <path data-part="body" d={d} fill="none" stroke={C.fill} strokeWidth="58" strokeLinecap="round" strokeLinejoin="round" />}
@@ -2572,9 +2572,6 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
   const [fx, setFx] = useState(null);
   const [toast, setToast] = useState(null);
   const [plus, setPlus] = useState(null);
-  const [burst, setBurst] = useState(null);   // кольцо-вспышка в точке завершённого обеда
-  const [popId, setPopId] = useState(null);   // едок коротко «сглатывает» всем телом
-  const popTimerRef = useRef(null);
   const [wonInfo, setWonInfo] = useState(null);
   const [lostReason, setLostReason] = useState(null);
   const [crashed, setCrashed] = useState(false); // авария: поле не менялось, «Продолжить» бесплатен
@@ -2597,7 +2594,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
           window.matchMedia("(prefers-reduced-motion: reduce)").matches, []
   );
 
-  useEffect(() => () => { cancelAnimationFrame(rafRef.current); clearTimeout(fxTimerRef.current); clearTimeout(crashTimerRef.current); clearTimeout(popTimerRef.current); }, []);
+  useEffect(() => () => { cancelAnimationFrame(rafRef.current); clearTimeout(fxTimerRef.current); clearTimeout(crashTimerRef.current); }, []);
 
   const best = maxLen(snakes);
   // Отметка, которую игрок сейчас берёт, и запас до неё. Запас = сколько длины ещё
@@ -2626,11 +2623,6 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
       const e = mv.finalSnakes.find((s) => s.id === mv.moverId);
       if (e) {
         setPlus({ x: e.cells[0][0], y: e.cells[0][1], n: mv.gained, sign: "+", key: Date.now() });
-        // тактильность слияния: кольцо из головы + короткий «сглот» всем телом
-        setBurst({ x: e.cells[0][0], y: e.cells[0][1], color: COLORS[e.color].fill, key: Date.now() });
-        setPopId(mv.moverId);
-        clearTimeout(popTimerRef.current);
-        popTimerRef.current = setTimeout(() => setPopId(null), 420);
         if (navigator.vibrate) navigator.vibrate(18);
       }
     } else if (mv.lost > 0) {
@@ -3033,17 +3025,12 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
                 shaking={fx && fx.shakeId === s.id} onTap={tapSnake} />
             ) : (
               <SnakeView key={s.id} snake={s} regRef={regRef}
-                shaking={fx && fx.shakeId === s.id} popping={popId === s.id} onTap={tapSnake} />
+                shaking={fx && fx.shakeId === s.id} onTap={tapSnake} />
             )))}
           </g>
           {(level.bridges || []).map(([x, y]) => <BridgeRail key={"br" + x + "-" + y} x={x} y={y} />)}
           {(level.turns || []).map(([x, y, a, b]) => <TurnWalls key={"tw" + x + "-" + y} x={x} y={y} a={a} b={b} />)}
           {fx && fx.ray && <RayView ray={fx.ray} from={fx.from} color={fx.color} />}
-          {burst && (
-            <circle key={"b" + burst.key} className="hv-burst"
-              cx={burst.x * CS + CS / 2} cy={burst.y * CS + CS / 2}
-              r="46" fill="none" stroke={burst.color} strokeWidth="14" />
-          )}
           {plus && (
             <text key={plus.key} className="hv-plus" x={plus.x * CS + CS / 2} y={plus.y * CS - 6}
               textAnchor="middle" fontFamily="Rubik, sans-serif" fontWeight="800" fontSize="46"
@@ -3819,12 +3806,6 @@ body{overflow-x:hidden;-webkit-text-size-adjust:100%;}
   box-shadow:0 14px 34px rgba(128,98,62,.16),inset 0 0 0 1px #F1E6D1;touch-action:manipulation;}
 
 .hv-snake{filter:drop-shadow(0 4px 3px rgba(120,90,55,.18));}
-/* «Сглот» при слиянии: короткий squash всем телом. transform-box обязателен —
-   без него g масштабируется от угла холста и змею уносит. */
-.hv-pop{animation:hvpop .4s cubic-bezier(.3,1.6,.5,1);transform-box:fill-box;transform-origin:center;}
-@keyframes hvpop{0%{transform:scale(1)}35%{transform:scale(1.07,.94)}70%{transform:scale(.97,1.04)}100%{transform:scale(1)}}
-.hv-burst{animation:hvburst .5s ease-out forwards;pointer-events:none;transform-box:fill-box;transform-origin:center;}
-@keyframes hvburst{0%{opacity:.85;transform:scale(.35)}100%{opacity:0;transform:scale(2.1)}}
 .hv-shake{animation:hvshake .38s ease;}
 @keyframes hvshake{0%,100%{transform:translate(0,0)}20%{transform:translate(-7px,0)}40%{transform:translate(7px,0)}
   60%{transform:translate(-5px,0)}80%{transform:translate(5px,0)}}
@@ -3905,7 +3886,7 @@ body{overflow-x:hidden;-webkit-text-size-adjust:100%;}
 .hv-note{margin-top:16px;font-size:11.5px;color:#B4A791;}
 
 @media (prefers-reduced-motion: reduce){
-  .hv-shake,.hv-dash,.hv-plus,.hv-star,.hv-squigpath,.hv-tongue,.hv-pop,.hv-burst{animation:none !important;}
+  .hv-shake,.hv-dash,.hv-plus,.hv-star,.hv-squigpath,.hv-tongue{animation:none !important;}
   .hv-fill{transition:none;}
 }
 `;
