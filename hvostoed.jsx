@@ -14,17 +14,20 @@ import { encode as encodeShare, CFG_KEYS, REASONS } from "./sharecode.mjs";
 
 const CS = 100;
 
+/* Палитра v2 «конфеты»: светлая тёплая тема, змеи — сочные, но мягкие тона,
+   тёмный контур на полтона глубже заливки (а не в чёрный) — так тело читается
+   объёмным леденцом, а не проволокой. Референс — Arrows: плоско, кругло, тепло. */
 const COLORS = {
-  green:  { fill: "#58A942", dark: "#3C7A2C", nom: "зелёная",    gen: "зелёной" },
-  blue:   { fill: "#3D7BE0", dark: "#2856A8", nom: "синяя",      gen: "синей" },
-  orange: { fill: "#F0912D", dark: "#B96613", nom: "оранжевая",  gen: "оранжевой" },
-  plum:   { fill: "#9C56D9", dark: "#6F35A5", nom: "фиолетовая", gen: "фиолетовой" },
-  pink:   { fill: "#E2519A", dark: "#AC2F6E", nom: "розовая",    gen: "розовой" },
-  teal:   { fill: "#23B5A3", dark: "#0F8375", nom: "бирюзовая",  gen: "бирюзовой" },
-  red:    { fill: "#E05548", dark: "#A93327", nom: "красная",    gen: "красной" },
-  spiky:  { fill: "#8A9163", dark: "#535A33", nom: "колючая",    gen: "колючей" },
-  sleepy: { fill: "#7E8BA3", dark: "#4E5970", nom: "спящая",     gen: "спящей" },
-  apple:  { fill: "#D8402F", dark: "#9B241A", nom: "яблоко",     gen: "яблока" },
+  green:  { fill: "#7CC961", dark: "#57A040", nom: "зелёная",    gen: "зелёной" },
+  blue:   { fill: "#5FA8F5", dark: "#3D7ECC", nom: "синяя",      gen: "синей" },
+  orange: { fill: "#F7A94B", dark: "#D98426", nom: "оранжевая",  gen: "оранжевой" },
+  plum:   { fill: "#B489E8", dark: "#8E62C6", nom: "фиолетовая", gen: "фиолетовой" },
+  pink:   { fill: "#F585B1", dark: "#D65E8D", nom: "розовая",    gen: "розовой" },
+  teal:   { fill: "#4FC9BD", dark: "#2FA398", nom: "бирюзовая",  gen: "бирюзовой" },
+  red:    { fill: "#F0776A", dark: "#CC5145", nom: "красная",    gen: "красной" },
+  spiky:  { fill: "#A9AE7C", dark: "#7C814F", nom: "колючая",    gen: "колючей" },
+  sleepy: { fill: "#9FABBF", dark: "#748196", nom: "спящая",     gen: "спящей" },
+  apple:  { fill: "#EA6552", dark: "#C13F2E", nom: "яблоко",     gen: "яблока" },
 };
 const ORDER = ["green", "blue", "orange", "plum", "pink", "teal", "red"];
 
@@ -2411,7 +2414,7 @@ function AppleView({ snake, shaking, onTap, regRef }) {
   );
 }
 
-function SnakeView({ snake, shaking, onTap, regRef }) {
+function SnakeView({ snake, shaking, popping, onTap, regRef }) {
   const C = COLORS[snake.color];
   const pts = snake.cells.map(toPx);
   const d = dStr(pts);
@@ -2461,7 +2464,7 @@ function SnakeView({ snake, shaking, onTap, regRef }) {
   return (
     <g ref={(n) => { if (n) regRef.current[snake.id] = n; else delete regRef.current[snake.id]; }}
        data-sid={snake.id}
-       className={shaking ? "hv-shake" : ""} style={{ cursor: "pointer" }}
+       className={"hv-snake" + (shaking ? " hv-shake" : "") + (popping ? " hv-pop" : "")} style={{ cursor: "pointer" }}
        onPointerDown={(e) => { e.stopPropagation(); onTap(snake.id); }}>
       {hasBody && <path data-part="outline" d={d} fill="none" stroke={C.dark} strokeWidth="70" strokeLinecap="round" strokeLinejoin="round" />}
       {hasBody && <path data-part="body" d={d} fill="none" stroke={C.fill} strokeWidth="58" strokeLinecap="round" strokeLinejoin="round" />}
@@ -2474,16 +2477,23 @@ function SnakeView({ snake, shaking, onTap, regRef }) {
           {snake.sleep ? (
             // спящая: закрытые глаза вместо зрачков и без языка — видно, что она не в игре
             <>
-              <path d="M9 -15 A11 11 0 0 0 25 -15" stroke="#1E2A1D" strokeWidth="4.5" strokeLinecap="round" fill="none" />
-              <path d="M9 15 A11 11 0 0 0 25 15" stroke="#1E2A1D" strokeWidth="4.5" strokeLinecap="round" fill="none" />
+              <circle cx="2" cy="-27" r="7" fill="#FFFFFF" opacity="0.3" />
+              <circle cx="2" cy="27" r="7" fill="#FFFFFF" opacity="0.3" />
+              <path d="M9 -15 A11 11 0 0 0 25 -15" stroke="#4A3A32" strokeWidth="4.5" strokeLinecap="round" fill="none" />
+              <path d="M9 15 A11 11 0 0 0 25 15" stroke="#4A3A32" strokeWidth="4.5" strokeLinecap="round" fill="none" />
             </>
           ) : (
             <>
-              <path className="hv-tongue" d="M43 0 L61 8 M43 0 L61 -8" stroke="#D9382B" strokeWidth="6" strokeLinecap="round" fill="none" />
-              <circle cx="17" cy="-15" r="9.5" fill="#FFFDF4" />
-              <circle cx="17" cy="15" r="9.5" fill="#FFFDF4" />
-              <circle cx="21" cy="-15" r="4.5" fill="#1E2A1D" />
-              <circle cx="21" cy="15" r="4.5" fill="#1E2A1D" />
+              <path className="hv-tongue" d="M43 0 L61 8 M43 0 L61 -8" stroke="#E2574B" strokeWidth="6" strokeLinecap="round" fill="none" />
+              {/* румянец и блик в зрачке — дёшево, а морда сразу живая и добрая */}
+              <circle cx="2" cy="-27" r="7" fill="#FFFFFF" opacity="0.35" />
+              <circle cx="2" cy="27" r="7" fill="#FFFFFF" opacity="0.35" />
+              <circle cx="16" cy="-15" r="11" fill="#FFFFFF" />
+              <circle cx="16" cy="15" r="11" fill="#FFFFFF" />
+              <circle cx="20" cy="-14" r="5.5" fill="#4A3A32" />
+              <circle cx="20" cy="14" r="5.5" fill="#4A3A32" />
+              <circle cx="22" cy="-16.5" r="2" fill="#FFFFFF" />
+              <circle cx="22" cy="11.5" r="2" fill="#FFFFFF" />
             </>
           )}
         </g>
@@ -2562,6 +2572,9 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
   const [fx, setFx] = useState(null);
   const [toast, setToast] = useState(null);
   const [plus, setPlus] = useState(null);
+  const [burst, setBurst] = useState(null);   // кольцо-вспышка в точке завершённого обеда
+  const [popId, setPopId] = useState(null);   // едок коротко «сглатывает» всем телом
+  const popTimerRef = useRef(null);
   const [wonInfo, setWonInfo] = useState(null);
   const [lostReason, setLostReason] = useState(null);
   const [crashed, setCrashed] = useState(false); // авария: поле не менялось, «Продолжить» бесплатен
@@ -2584,7 +2597,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
           window.matchMedia("(prefers-reduced-motion: reduce)").matches, []
   );
 
-  useEffect(() => () => { cancelAnimationFrame(rafRef.current); clearTimeout(fxTimerRef.current); clearTimeout(crashTimerRef.current); }, []);
+  useEffect(() => () => { cancelAnimationFrame(rafRef.current); clearTimeout(fxTimerRef.current); clearTimeout(crashTimerRef.current); clearTimeout(popTimerRef.current); }, []);
 
   const best = maxLen(snakes);
   // Отметка, которую игрок сейчас берёт, и запас до неё. Запас = сколько длины ещё
@@ -2611,7 +2624,15 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     setSnakes(mv.finalSnakes);
     if (mv.gained > 0) {
       const e = mv.finalSnakes.find((s) => s.id === mv.moverId);
-      if (e) setPlus({ x: e.cells[0][0], y: e.cells[0][1], n: mv.gained, sign: "+", key: Date.now() });
+      if (e) {
+        setPlus({ x: e.cells[0][0], y: e.cells[0][1], n: mv.gained, sign: "+", key: Date.now() });
+        // тактильность слияния: кольцо из головы + короткий «сглот» всем телом
+        setBurst({ x: e.cells[0][0], y: e.cells[0][1], color: COLORS[e.color].fill, key: Date.now() });
+        setPopId(mv.moverId);
+        clearTimeout(popTimerRef.current);
+        popTimerRef.current = setTimeout(() => setPopId(null), 420);
+        if (navigator.vibrate) navigator.vibrate(18);
+      }
     } else if (mv.lost > 0) {
       setPlus({ x: mv.lostAt[0], y: mv.lostAt[1], n: mv.lost, sign: "−", key: Date.now() });
     }
@@ -2753,7 +2774,11 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
       const hp = ptAt(P, h);
       if (headG) headG.setAttribute("transform", "translate(" + hp[0].toFixed(1) + " " + hp[1].toFixed(1) + ")");
       if (rotG) rotG.setAttribute("transform", "rotate(" + angleAt(P, h).toFixed(1) + ")");
-      if (num) num.textContent = String(mv.n0 + ffPre[Math.floor(Math.min(u, pathLen))]);
+      if (num) {
+        const nv = String(mv.n0 + ffPre[Math.floor(Math.min(u, pathLen))]);
+        if (num.textContent !== nv && navigator.vibrate) navigator.vibrate(8);
+        num.textContent = nv;
+      }
       if (headCircle) {
         const r = mv.kind === "eat" && u > gapLen && u < pathLen
           ? 43 + 9 * Math.abs(Math.sin(Math.PI * fu)) : 43;
@@ -2916,7 +2941,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     for (let x = 0; x < level.w; x++)
       cells.push(
         <rect key={x + "-" + y} x={x * CS + 5} y={y * CS + 5} width={CS - 10} height={CS - 10}
-          rx="16" fill={(x + y) % 2 ? "#DFE9C6" : "#E5EED1"} />
+          rx="16" fill={(x + y) % 2 ? "#F5ECDB" : "#FAF3E6"} />
       );
 
   return (
@@ -2983,14 +3008,14 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
           <defs>
             <clipPath id="hv-clip"><rect x="0" y="0" width={W} height={H} rx="20" /></clipPath>
           </defs>
-          <rect x="0" y="0" width={W} height={H} rx="20" fill="#ECF2DE" />
+          <rect x="0" y="0" width={W} height={H} rx="20" fill="#FFFDF8" />
           {cells}
           {isSec && level.sections.slice(open).map((r, k) => (
             <g key={"lid" + (open + k)}>
               <rect x={r.x * CS + 4} y={r.y * CS + 4} width={r.w * CS - 8} height={r.h * CS - 8}
-                rx="18" fill="#41544A" stroke="#31413A" strokeWidth="3" />
+                rx="18" fill="#E8DCC5" stroke="#DBCCAE" strokeWidth="3" />
               <text x={r.x * CS + (r.w * CS) / 2} y={r.y * CS + (r.h * CS) / 2 + 16}
-                textAnchor="middle" fontSize="46" fontWeight="700" fill="#5E7568">?</text>
+                textAnchor="middle" fontSize="46" fontWeight="700" fill="#C4B292">?</text>
             </g>
           ))}
           {(level.turns || []).map(([x, y, a, b]) => <TurnFloor key={"t" + x + "-" + y} x={x} y={y} a={a} b={b} />)}
@@ -3008,12 +3033,17 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
                 shaking={fx && fx.shakeId === s.id} onTap={tapSnake} />
             ) : (
               <SnakeView key={s.id} snake={s} regRef={regRef}
-                shaking={fx && fx.shakeId === s.id} onTap={tapSnake} />
+                shaking={fx && fx.shakeId === s.id} popping={popId === s.id} onTap={tapSnake} />
             )))}
           </g>
           {(level.bridges || []).map(([x, y]) => <BridgeRail key={"br" + x + "-" + y} x={x} y={y} />)}
           {(level.turns || []).map(([x, y, a, b]) => <TurnWalls key={"tw" + x + "-" + y} x={x} y={y} a={a} b={b} />)}
           {fx && fx.ray && <RayView ray={fx.ray} from={fx.from} color={fx.color} />}
+          {burst && (
+            <circle key={"b" + burst.key} className="hv-burst"
+              cx={burst.x * CS + CS / 2} cy={burst.y * CS + CS / 2}
+              r="46" fill="none" stroke={burst.color} strokeWidth="14" />
+          )}
           {plus && (
             <text key={plus.key} className="hv-plus" x={plus.x * CS + CS / 2} y={plus.y * CS - 6}
               textAnchor="middle" fontFamily="Rubik, sans-serif" fontWeight="800" fontSize="46"
@@ -3031,7 +3061,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
                   {[0, 1, 2].map((i) => (
                     <Star key={i} size={34} className="hv-star" style={{ animationDelay: i * 0.12 + "s" }}
                       fill={i < wonInfo.stars ? "#EFAF3C" : "none"}
-                      color={i < wonInfo.stars ? "#EFAF3C" : "#57685A"} />
+                      color={i < wonInfo.stars ? "#EFAF3C" : "#DACDB6"} />
                   ))}
                 </div>
               )}
@@ -3061,7 +3091,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
               <div className="hv-stars">
                 {(level.marks || []).map((m, i) => (
                   <Star key={m} size={34} className="hv-star" style={{ animationDelay: i * 0.12 + "s" }}
-                    fill={runBest >= m ? "#EFAF3C" : "none"} color={runBest >= m ? "#EFAF3C" : "#57685A"} />
+                    fill={runBest >= m ? "#EFAF3C" : "none"} color={runBest >= m ? "#EFAF3C" : "#DACDB6"} />
                 ))}
               </div>
               <div className="hv-wontitle">{runBest > (record || 0) ? "Новый рекорд!" : "Партия окончена"}</div>
@@ -3367,9 +3397,9 @@ function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft
       <div className="hv-logo">ХВОСТОЕД</div>
       <svg className="hv-squiggle" viewBox="0 0 220 26">
         <path d="M6 16 q 18 -18 36 0 t 36 0 t 36 0 t 36 0 t 36 0" fill="none"
-          stroke="#58A942" strokeWidth="7" strokeLinecap="round" className="hv-squigpath" />
-        <circle cx="196" cy="14" r="8" fill="#58A942" />
-        <circle cx="199" cy="11" r="2" fill="#152118" />
+          stroke="#EE7A6A" strokeWidth="7" strokeLinecap="round" className="hv-squigpath" />
+        <circle cx="196" cy="14" r="8" fill="#EE7A6A" />
+        <circle cx="199" cy="11" r="2" fill="#4A4038" />
       </svg>
       <div className="hv-packs">
         {packs.map((p, i) => (
@@ -3439,7 +3469,7 @@ function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft
                 ) : [0, 1, 2].map((i) => (
                   <Star key={i} size={14}
                     fill={i < got ? "#EFAF3C" : "none"}
-                    color={i < got ? "#EFAF3C" : "#41544A"} />
+                    color={i < got ? "#EFAF3C" : "#E8DCC5"} />
                 ))}
               </span>
             </button>
@@ -3691,11 +3721,11 @@ const CSS_TEXT = `
 
 /* Без этого на айфоне по краям белое: у body свои отступы по умолчанию, а за
    безопасными зонами и при оттяжке страницы Safari красит холст фоном html. */
-html,body{margin:0;padding:0;background:#101A13;overscroll-behavior:none;}
+html,body{margin:0;padding:0;background:#F1E7D6;overscroll-behavior:none;}
 body{overflow-x:hidden;-webkit-text-size-adjust:100%;}
 
-.hv-root{min-height:100vh;min-height:100dvh;width:100%;overflow-x:hidden;overflow-x:clip;background:radial-gradient(120% 90% at 50% 0%,#1C2C20 0%,#152118 55%,#101A13 100%);
-  color:#F3F0E4;font-family:Rubik,system-ui,sans-serif;display:flex;justify-content:center;
+.hv-root{min-height:100vh;min-height:100dvh;width:100%;overflow-x:hidden;overflow-x:clip;background:radial-gradient(120% 90% at 50% 0%,#FBF6ED 0%,#F6EEE0 55%,#F1E7D6 100%);
+  color:#453B33;font-family:Rubik,system-ui,sans-serif;display:flex;justify-content:center;
   /* На телефоне: двойной тап по змеям не должен зумить поле, долгое нажатие — выделять текст,
      промах мимо змеи — раскачивать страницу. 100dvh вместо 100vh, иначе адресная строка Safari
      добавляет лишнюю прокрутку. */
@@ -3708,38 +3738,38 @@ body{overflow-x:hidden;-webkit-text-size-adjust:100%;}
           calc(22px + env(safe-area-inset-bottom)) var(--padl);}
 
 .hv-top{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
-.hv-icon{width:40px;height:40px;border-radius:13px;border:1px solid #2C3E30;background:#1B2A1F;color:#F3F0E4;
+.hv-icon{width:40px;height:40px;border-radius:13px;border:1px solid #EBDFCB;background:#FFFFFF;color:#453B33;
   display:flex;align-items:center;justify-content:center;cursor:pointer;}
 .hv-icon:disabled{opacity:.35;cursor:default;}
 .hv-icon:not(:disabled):active{transform:scale(.93);}
 .hv-lvname{flex:1;font-weight:600;font-size:16px;letter-spacing:.2px;}
-.hv-lvnum{display:inline-flex;width:24px;height:24px;border-radius:8px;background:#58A942;color:#0F1A12;
+.hv-lvnum{display:inline-flex;width:24px;height:24px;border-radius:8px;background:#EE7A6A;color:#FFFFFF;
   align-items:center;justify-content:center;font-weight:800;font-size:13px;margin-right:6px;}
 
 .hv-goalrow{display:flex;align-items:center;gap:9px;margin-bottom:10px;}
-.hv-goal{font-size:12px;font-weight:800;color:#0F1A12;background:#EFAF3C;border-radius:9px;padding:4px 8px;white-space:nowrap;}
-.hv-bar{flex:1;height:12px;border-radius:8px;background:#243527;overflow:hidden;position:relative;}
-.hv-goal.rec{background:#58A942;color:#08120A;}
-.hv-mark{position:absolute;top:0;width:2px;height:100%;background:#0F1A12;opacity:.55;transform:translateX(-1px);}
+.hv-goal{font-size:12px;font-weight:800;color:#5C4326;background:#EFAF3C;border-radius:9px;padding:4px 8px;white-space:nowrap;}
+.hv-bar{flex:1;height:12px;border-radius:8px;background:#F2E9DA;overflow:hidden;position:relative;}
+.hv-goal.rec{background:#EE7A6A;color:#5C4326;}
+.hv-mark{position:absolute;top:0;width:2px;height:100%;background:#5C4326;opacity:.55;transform:translateX(-1px);}
 .hv-mark.hit{background:#FFFDF4;opacity:.75;}
-.hv-endbtn{margin-left:10px;font:inherit;font-weight:800;color:#0F1A12;background:#EFAF3C;
+.hv-endbtn{margin-left:10px;font:inherit;font-weight:800;color:#5C4326;background:#EFAF3C;
   border:0;border-radius:8px;padding:3px 10px;cursor:pointer;}
 .hv-icon{position:relative;}
 .hv-icon.hv-hinted{color:#EFAF3C;}
 .hv-hintn{position:absolute;top:1px;right:1px;min-width:14px;height:14px;line-height:14px;
-  border-radius:7px;background:#EFAF3C;color:#0F1A12;font-size:9px;font-weight:800;padding:0 3px;}
+  border-radius:7px;background:#EFAF3C;color:#5C4326;font-size:9px;font-weight:800;padding:0 3px;}
 .hv-hintnote{margin-top:8px;font-size:12px;color:#EFAF3C;}
 .hv-shop{margin-bottom:12px;}
-.hv-shopline{font-size:12px;color:#9FB29B;line-height:1.45;margin-bottom:9px;}
+.hv-shopline{font-size:12px;color:#96897A;line-height:1.45;margin-bottom:9px;}
 .hv-presets{display:grid;grid-template-columns:1fr 1fr;gap:7px;}
 .hv-preset{display:flex;flex-direction:column;align-items:flex-start;gap:2px;font:inherit;
-  font-size:13px;font-weight:800;color:#F3F0E4;background:#1B2A1F;border:1px solid #2C3E30;
+  font-size:13px;font-weight:800;color:#453B33;background:#FFFFFF;border:1px solid #EBDFCB;
   border-radius:12px;padding:9px 11px;cursor:pointer;text-align:left;}
 .hv-preset:disabled{opacity:.45;}
-.hv-preset svg{vertical-align:-2px;margin-right:4px;color:#9CCB3B;}
-.hv-presetmeta{font-size:10px;font-weight:600;color:#8C9E88;text-transform:none;}
+.hv-preset svg{vertical-align:-2px;margin-right:4px;color:#F2B84B;}
+.hv-presetmeta{font-size:10px;font-weight:600;color:#A2957F;text-transform:none;}
 .hv-shopstatus{margin-top:9px;font-size:12px;color:#EFAF3C;}
-.hv-shopempty{font-size:12px;color:#8C9E88;padding:10px 2px;}
+.hv-shopempty{font-size:12px;color:#A2957F;padding:10px 2px;}
 /* Настройка генератора. На телефоне ряд «название — значение» читается лучше
    таблицы, поэтому каждая ручка — своя строка, а не сетка. */
 /* Модалка живёт поверх всего экрана, а не внутри поля, — отсюда fixed вместо
@@ -3749,45 +3779,52 @@ body{overflow-x:hidden;-webkit-text-size-adjust:100%;}
 .hv-card.hv-cfg{position:relative;z-index:1;text-align:left;max-height:86vh;overflow-y:auto;
   width:min(100%,360px);}
 .hv-cfgtop{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;}
-.hv-cfgttl{font-family:Unbounded,Rubik,sans-serif;font-weight:500;font-size:15px;color:#F3F0E4;}
+.hv-cfgttl{font-family:Unbounded,Rubik,sans-serif;font-weight:500;font-size:15px;color:#453B33;}
 .hv-knob{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;
-  border-top:1px solid #24352A;}
+  border-top:1px solid #F0E7D8;}
 .hv-knob.col{flex-direction:column;align-items:stretch;gap:7px;}
 .hv-knob.sub{border-top:none;padding:2px 0 4px 14px;}
-.hv-knob.sub .hv-knobnom{font-size:12px;color:#8AA089;}
-.hv-knobnom{font-size:13px;color:#C9D6C2;display:flex;flex-direction:column;gap:1px;}
-.hv-knobhint{font-style:normal;font-size:10.5px;color:#8AA089;}
+.hv-knob.sub .hv-knobnom{font-size:12px;color:#9C8F7B;}
+.hv-knobnom{font-size:13px;color:#6E6154;display:flex;flex-direction:column;gap:1px;}
+.hv-knobhint{font-style:normal;font-size:10.5px;color:#9C8F7B;}
 .hv-step{display:flex;align-items:center;gap:4px;flex:0 0 auto;}
-.hv-step b{min-width:34px;text-align:center;font-size:15px;font-weight:800;color:#F3F0E4;}
-.hv-stepb{width:32px;height:32px;border-radius:10px;border:1px solid #2C3E30;background:#1B2A1F;
-  color:#F3F0E4;font:inherit;font-size:17px;font-weight:800;line-height:1;cursor:pointer;}
+.hv-step b{min-width:34px;text-align:center;font-size:15px;font-weight:800;color:#453B33;}
+.hv-stepb{width:32px;height:32px;border-radius:10px;border:1px solid #EBDFCB;background:#FFFFFF;
+  color:#453B33;font:inherit;font-size:17px;font-weight:800;line-height:1;cursor:pointer;}
 .hv-stepb:disabled{opacity:.3;}
 .hv-slide{display:flex;align-items:center;gap:10px;}
-.hv-slide input{flex:1;min-width:0;accent-color:#9CCB3B;height:26px;}
-.hv-slide b{min-width:28px;text-align:right;font-size:15px;font-weight:800;color:#F3F0E4;}
+.hv-slide input{flex:1;min-width:0;accent-color:#F2B84B;height:26px;}
+.hv-slide b{min-width:28px;text-align:right;font-size:15px;font-weight:800;color:#453B33;}
 .hv-slide b.over{color:#EFAF3C;}
 .hv-chips{display:flex;gap:6px;flex-wrap:wrap;}
-.hv-chip{font:inherit;font-size:12px;font-weight:600;color:#8AA089;background:#1B2A1F;
-  border:1px solid #2C3E30;border-radius:10px;padding:7px 10px;cursor:pointer;}
-.hv-chip.on{border-color:#58A942;color:#F3F0E4;background:#20321F;}
-.hv-why{margin-top:10px;padding:9px 11px;border-radius:12px;background:#33290F;border:1px solid #5C4A18;
-  display:flex;flex-direction:column;gap:3px;font-size:12px;color:#F0D9A0;}
+.hv-chip{font:inherit;font-size:12px;font-weight:600;color:#9C8F7B;background:#FFFFFF;
+  border:1px solid #EBDFCB;border-radius:10px;padding:7px 10px;cursor:pointer;}
+.hv-chip.on{border-color:#EE7A6A;color:#453B33;background:#FDF1EA;}
+.hv-why{margin-top:10px;padding:9px 11px;border-radius:12px;background:#FBF0D6;border:1px solid #E8CE93;
+  display:flex;flex-direction:column;gap:3px;font-size:12px;color:#8A6C28;}
 .hv-why b{color:#EFAF3C;font-size:12.5px;}
 .hv-cfgbusy{flex:1;font-size:13px;color:#EFAF3C;font-weight:600;}
-.hv-mini{display:inline-flex;padding:5px;border-radius:8px;color:#8C9E88;}
-.hv-mini:active{background:#243527;color:#F3F0E4;}
-.hv-fill{height:100%;border-radius:8px;background:linear-gradient(90deg,#58A942,#9CCB3B);transition:width .35s ease;}
-.hv-count{font-size:13px;font-weight:600;color:#B9C8B4;min-width:52px;text-align:right;font-variant-numeric:tabular-nums;}
-.hv-slack{font-size:12px;color:#9FB29B;background:#1B2A1F;border:1px solid #2C3E30;border-radius:10px;
+.hv-mini{display:inline-flex;padding:5px;border-radius:8px;color:#A2957F;}
+.hv-mini:active{background:#F2E9DA;color:#453B33;}
+.hv-fill{height:100%;border-radius:8px;background:linear-gradient(90deg,#EE7A6A,#F2B84B);transition:width .35s ease;}
+.hv-count{font-size:13px;font-weight:600;color:#8F8270;min-width:52px;text-align:right;font-variant-numeric:tabular-nums;}
+.hv-slack{font-size:12px;color:#96897A;background:#FFFFFF;border:1px solid #EBDFCB;border-radius:10px;
   padding:5px 10px;margin:-4px 0 10px;align-self:flex-start;}
 .hv-slack b{color:#EFAF3C;font-variant-numeric:tabular-nums;}
-.hv-slack.tight{background:#33290F;border-color:#5C4A18;color:#F0D9A0;}
-.hv-slack.tight b{color:#F0D9A0;}
+.hv-slack.tight{background:#FBF0D6;border-color:#E8CE93;color:#8A6C28;}
+.hv-slack.tight b{color:#8A6C28;}
 
 .hv-boardwrap{position:relative;}
-.hv-board{width:100%;display:block;border-radius:24px;background:#ECF2DE;
-  box-shadow:0 14px 34px rgba(0,0,0,.42),inset 0 0 0 1px #C9D6AE;touch-action:manipulation;}
+.hv-board{width:100%;display:block;border-radius:24px;background:#FFFDF8;
+  box-shadow:0 14px 34px rgba(128,98,62,.16),inset 0 0 0 1px #F1E6D1;touch-action:manipulation;}
 
+.hv-snake{filter:drop-shadow(0 4px 3px rgba(120,90,55,.18));}
+/* «Сглот» при слиянии: короткий squash всем телом. transform-box обязателен —
+   без него g масштабируется от угла холста и змею уносит. */
+.hv-pop{animation:hvpop .4s cubic-bezier(.3,1.6,.5,1);transform-box:fill-box;transform-origin:center;}
+@keyframes hvpop{0%{transform:scale(1)}35%{transform:scale(1.07,.94)}70%{transform:scale(.97,1.04)}100%{transform:scale(1)}}
+.hv-burst{animation:hvburst .5s ease-out forwards;pointer-events:none;transform-box:fill-box;transform-origin:center;}
+@keyframes hvburst{0%{opacity:.85;transform:scale(.35)}100%{opacity:0;transform:scale(2.1)}}
 .hv-shake{animation:hvshake .38s ease;}
 @keyframes hvshake{0%,100%{transform:translate(0,0)}20%{transform:translate(-7px,0)}40%{transform:translate(7px,0)}
   60%{transform:translate(-5px,0)}80%{transform:translate(5px,0)}}
@@ -3799,44 +3836,44 @@ body{overflow-x:hidden;-webkit-text-size-adjust:100%;}
 @keyframes hvtongue{0%,86%,100%{transform:scaleX(.12);opacity:0}90%,95%{transform:scaleX(1);opacity:1}}
 
 .hv-foot{margin-top:12px;min-height:64px;display:flex;align-items:center;}
-.hv-lesson{font-size:14px;color:#9FB29B;line-height:1.45;}
-.hv-toast{font-size:14px;color:#F3F0E4;background:#22331F;border:1px solid #355030;border-radius:14px;
+.hv-lesson{font-size:14px;color:#96897A;line-height:1.45;}
+.hv-toast{font-size:14px;color:#453B33;background:#FFF9EF;border:1px solid #EDE0C8;border-radius:14px;
   padding:10px 14px;line-height:1.4;width:100%;animation:hvfade .25s ease;}
-.hv-toast.warn{background:#33290F;border-color:#5C4A18;color:#F0D9A0;}
-.hv-toast.good{background:#1B3A1B;border-color:#3E6B36;color:#CFEBB4;}
+.hv-toast.warn{background:#FBF0D6;border-color:#E8CE93;color:#8A6C28;}
+.hv-toast.good{background:#EAF5E2;border-color:#C4DFAD;color:#4F7A38;}
 @keyframes hvfade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .hv-btn{border-radius:13px;border:none;font-family:Rubik,sans-serif;font-weight:800;font-size:14px;
   padding:11px 16px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;}
-.hv-btn.main{background:#58A942;color:#0F1A12;}
-.hv-btn.ghost{background:transparent;color:#C9D6C2;border:1px solid #3A4E3E;}
+.hv-btn.main{background:#EE7A6A;color:#FFFFFF;box-shadow:0 4px 12px rgba(238,122,106,.35);}
+.hv-btn.ghost{background:transparent;color:#6E6154;border:1px solid #E6D9C3;}
 .hv-btn.small{padding:8px 12px;font-size:13px;}
 .hv-btn:disabled{opacity:.4;cursor:default;}
 .hv-btn:not(:disabled):active{transform:scale(.95);}
 .hv-btn:focus-visible,.hv-icon:focus-visible,.hv-lvcard:focus-visible{outline:2px solid #EFAF3C;outline-offset:2px;}
 
 .hv-overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  background:rgba(14,22,15,.55);border-radius:24px;backdrop-filter:blur(3px);animation:hvfade .3s ease;}
-.hv-card{background:#1B2A1F;border:1px solid #35503C;border-radius:22px;padding:22px 24px;text-align:center;
-  width:min(86%,310px);box-shadow:0 20px 50px rgba(0,0,0,.5);}
+  background:rgba(84,66,44,.35);border-radius:24px;backdrop-filter:blur(3px);animation:hvfade .3s ease;}
+.hv-card{background:#FFFFFF;border:1px solid #F0E4D0;border-radius:22px;padding:22px 24px;text-align:center;
+  width:min(86%,310px);box-shadow:0 20px 50px rgba(96,70,42,.22);}
 .hv-stars{display:flex;justify-content:center;gap:8px;margin-bottom:10px;}
 .hv-star{animation:hvstar .5s cubic-bezier(.5,1.8,.5,1) backwards;}
 @keyframes hvstar{from{opacity:0;transform:scale(.2) rotate(-30deg)}to{opacity:1;transform:none}}
 .hv-wontitle{font-family:Unbounded,sans-serif;font-weight:800;font-size:19px;margin-bottom:6px;}
-.hv-wontitle.lost{color:#E8A9A0;}
-.hv-wonsub{font-size:13px;color:#9FB29B;margin-bottom:16px;}
+.hv-wontitle.lost{color:#D26A50;}
+.hv-wonsub{font-size:13px;color:#96897A;margin-bottom:16px;}
 .hv-btnrow{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
 
 .hv-menu{padding-top:34px;align-items:center;position:relative;}
 .hv-logo{font-family:Unbounded,sans-serif;font-weight:800;font-size:34px;letter-spacing:1px;
-  color:#F3F0E4;text-shadow:0 3px 0 #0D150F;}
+  color:#453B33;text-shadow:0 3px 0 #E7D7BE;}
 .hv-squiggle{width:210px;margin:6px 0 12px;}
 .hv-squigpath{stroke-dasharray:300;stroke-dashoffset:300;animation:hvdraw 1.1s .15s ease forwards;}
 @keyframes hvdraw{to{stroke-dashoffset:0;}}
 .hv-reasons{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px;}
-.hv-btn.ghost.good{border-color:#4E7A3A;color:#B9DDA6;}
+.hv-btn.ghost.good{border-color:#EBB9A9;color:#D26A50;}
 .hv-inbox{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;
   margin-top:12px;padding:10px 12px;border:1px dashed #3C5A44;border-radius:14px;
-  font-size:12.5px;color:#9FB29B;}
+  font-size:12.5px;color:#96897A;}
 /* Вкладок больше, чем влезает в телефон. Лента прокручивается сама и выходит за
    отступы экрана — режется по краю стекла, а не по полю, — иначе горизонтально
    ползала вся страница. */
@@ -3850,25 +3887,25 @@ body{overflow-x:hidden;-webkit-text-size-adjust:100%;}
   padding-left:var(--padl);padding-right:var(--padr);}
 .hv-packs::-webkit-scrollbar{display:none;}
 .hv-pack{flex:0 0 auto;width:132px;scroll-snap-align:start;
-  display:flex;flex-direction:column;gap:2px;align-items:flex-start;background:#1B2A1F;
-  border:1px solid #2C3E30;border-radius:14px;padding:9px 12px;color:#8AA089;cursor:pointer;text-align:left;
+  display:flex;flex-direction:column;gap:2px;align-items:flex-start;background:#FFFFFF;
+  border:1px solid #EBDFCB;border-radius:14px;padding:9px 12px;color:#9C8F7B;cursor:pointer;text-align:left;
   font-family:Rubik,sans-serif;transition:border-color .12s ease,color .12s ease;}
-.hv-pack-on{border-color:#58A942;color:#F3F0E4;background:#20321F;}
+.hv-pack-on{border-color:#EE7A6A;color:#453B33;background:#FDF1EA;}
 .hv-packname{font-weight:600;font-size:14px;}
 .hv-packnote{font-size:11px;opacity:.75;}
 .hv-levels{display:flex;flex-direction:column;gap:9px;width:100%;}
-.hv-lvcard{display:flex;align-items:center;gap:12px;background:#1B2A1F;border:1px solid #2C3E30;border-radius:16px;
-  padding:11px 14px;color:#F3F0E4;cursor:pointer;text-align:left;font-family:Rubik,sans-serif;transition:transform .12s ease;}
+.hv-lvcard{display:flex;align-items:center;gap:12px;background:#FFFFFF;border:1px solid #EBDFCB;border-radius:16px;
+  padding:11px 14px;color:#453B33;cursor:pointer;text-align:left;font-family:Rubik,sans-serif;transition:transform .12s ease;}
 .hv-lvcard:active{transform:scale(.98);}
-.hv-lvbig{font-family:Unbounded,sans-serif;font-weight:800;font-size:20px;color:#58A942;width:28px;text-align:center;}
+.hv-lvbig{font-family:Unbounded,sans-serif;font-weight:800;font-size:20px;color:#EE7A6A;width:28px;text-align:center;}
 .hv-lvinfo{flex:1;display:flex;flex-direction:column;gap:2px;}
 .hv-lvtitle{font-weight:600;font-size:15px;}
-.hv-lvmeta{font-size:12px;color:#8AA089;}
+.hv-lvmeta{font-size:12px;color:#9C8F7B;}
 .hv-lvstars{display:flex;gap:3px;}
-.hv-note{margin-top:16px;font-size:11.5px;color:#5F7263;}
+.hv-note{margin-top:16px;font-size:11.5px;color:#B4A791;}
 
 @media (prefers-reduced-motion: reduce){
-  .hv-shake,.hv-dash,.hv-plus,.hv-star,.hv-squigpath,.hv-tongue{animation:none !important;}
+  .hv-shake,.hv-dash,.hv-plus,.hv-star,.hv-squigpath,.hv-tongue,.hv-pop,.hv-burst{animation:none !important;}
   .hv-fill{transition:none;}
 }
 `;
