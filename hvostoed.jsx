@@ -3652,6 +3652,12 @@ function CraftModal({ base, cfg, onSet, onClose, onGo, onReset, busy, fail }) {
 }
 
 /* ---------- меню ---------- */
+/* __HV_BUILD__ вшивает Vite (define в vite.config.js): дата сборки и хеш
+   коммита. Нужна затем, что service worker обновляет игру молча — без видимой
+   версии не отличить свежую сборку от старого кэша. typeof-заслон — для
+   прогонов файла вне Vite (esbuild-ворота, вырезки проверок). */
+const BUILD = typeof __HV_BUILD__ !== "undefined" ? __HV_BUILD__ : "дев";
+
 function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft, onDrop, busy, note, inbox, onDump, onClearInbox }) {
   const pack = packs[packIdx];
   return (
@@ -3738,7 +3744,7 @@ function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft
           );
         })}
       </div>
-      <div className="hv-note">прототип · звёзды живут до перезагрузки, рекорды — навсегда</div>
+      <div className="hv-note">прототип · звёзды живут до перезагрузки, рекорды — навсегда · сборка {BUILD}</div>
     </div>
   );
 }
