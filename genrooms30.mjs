@@ -28,7 +28,7 @@ export const BANDS = [
 const RW = 5, RH = 5;
 
 // комнаты змейкой по рядам: соседние по порядку — соседние на доске
-function rectsOf(grid) {
+export function rectsOf(grid) {
   const [cols, rows] = grid, out = [];
   for (let r = 0; r < rows; r++) {
     const xs = [...Array(cols).keys()];
@@ -45,7 +45,7 @@ function rectsOf(grid) {
    Она не ходит (sleep), её не съесть (spiky), луч о её тело бьётся — ровно
    поведение крышки в игре. Живёт последним элементом состояния, индексы
    настоящих змей не плывут. */
-const ctxAt = (rects, open, W, H) => {
+export const ctxAt = (rects, open, W, H) => {
   const cells = [], closed = new Set();
   for (let k = open; k < rects.length; k++) {
     const r = rects[k];
@@ -60,7 +60,7 @@ const withWall = (st, ctx) => ctx.wall ? st.concat([ctx.wall]) : st;
 const realOnly = (st, ctx) => ctx.wall ? st.slice(0, -1) : st;
 
 /* Полный разбор стадии: только обеды (вылетов в режиме нет). */
-function explore(snakes, ctx, W, H) {
+export function explore(snakes, ctx, W, H) {
   const done = ctx.wall ? 2 : 1;           // стена всегда остаётся на доске
   const finals = new Map(), memo = new Map();
   const canFinish = (st) => {
@@ -93,7 +93,7 @@ function explore(snakes, ctx, W, H) {
 }
 
 /* Решение стадии — последовательность клеток-голов для тапов (для браузерного теста). */
-function solveStage(snakes, ctx, W, H) {
+export function solveStage(snakes, ctx, W, H) {
   const board = ctx.board, done = ctx.wall ? 2 : 1;
   const seen = new Set();
   snakes = withWall(snakes, ctx);
