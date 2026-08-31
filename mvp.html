@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Хвостоед — головоломка</title>
+    <meta name="theme-color" content="#101A13" />
+    <meta name="description" content="Головоломка про змей, которые едят друг друга за хвост. Играй бесплатно, прямо в браузере." />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <!-- Манифеста и install-мет нет нарочно: это одноразовая посадочная для
+         теста трафика (mvp-plan.md), предлагать установку ей не положено. -->
+    <script>
+      /* HV_ANALYTICS — впиши ID, и счётчики оживут (как получить — mvp-plan.md).
+         Пока ID пустые, события уходят только в console — режим отладки. */
+      window.HV_ANALYTICS = {
+        YM_ID: 0,    // номер счётчика Яндекс Метрики, число
+        TMR_ID: "",  // ID пикселя VK Рекламы (счётчик top.mail.ru), строка
+      };
+
+      /* Единственный канал из игры наружу: игра зовёт hvTrack(name, params),
+         страница раскладывает по счётчикам. В Метрику уходит всё как цели с
+         параметрами, а вехи «уровень N пройден» дублируются ОТДЕЛЬНЫМИ целями
+         level_N_win: JS-цель Метрики — это только идентификатор, шаг «level_finish
+         с level=3» в составную воронку не завернуть — по параметрам воронка не
+         строится. В пиксель VK — только вехи, на которые можно оптимизировать
+         кампанию. */
+      window.hvTrack = function (name, params) {
+        var A = window.HV_ANALYTICS;
+        var mile = name === "level_finish" && params && params.result === "win" &&
+          (params.level === 1 || params.level === 3 || params.level === 8 || params.level === 14);
+        try {
+          if (A.YM_ID && window.ym) {
+            ym(A.YM_ID, "reachGoal", name, params || {});
+            if (mile) ym(A.YM_ID, "reachGoal", "level_" + params.level + "_win");
+          }
+          if (A.TMR_ID) {
+            var goal = null;
+            if (mile && params.level !== 14) goal = "level_" + params.level + "_done";
+            if (name === "demo_complete") goal = "demo_complete";
+            if (goal) (window._tmr = window._tmr || []).push({ id: A.TMR_ID, type: "reachGoal", goal: goal });
+          }
+          if (!A.YM_ID && window.console) console.log("[hvTrack]", name, params || {});
+        } catch (e) {}
+      };
+
+      (function () {
+        var A = window.HV_ANALYTICS;
+        if (A.YM_ID) {
+          (function (m, e, t, r, i, k, a) {
+            m[i] = m[i] || function () { (m[i].a = m[i].a || []).push(arguments); };
+            m[i].l = 1 * new Date();
+            k = e.createElement(t); a = e.getElementsByTagName(t)[0];
+            k.async = 1; k.src = r; a.parentNode.insertBefore(k, a);
+          })(window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+          ym(A.YM_ID, "init", { clickmap: true, trackLinks: true, accurateTrackBounce: true, webvisor: true });
+        }
+        if (A.TMR_ID) {
+          var _tmr = window._tmr || (window._tmr = []);
+          _tmr.push({ id: A.TMR_ID, type: "pageView", start: (new Date()).getTime() });
+          (function (d, w, id) {
+            if (d.getElementById(id)) return;
+            var ts = d.createElement("script");
+            ts.type = "text/javascript"; ts.async = true; ts.id = id;
+            ts.src = "https://top-fwz1.mail.ru/js/code.js";
+            var f = function () { var s = d.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ts, s); };
+            if (w.opera == "[object Opera]") { d.addEventListener("DOMContentLoaded", f, false); } else { f(); }
+          })(document, window, "tmr-code");
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Возрастная отметка: требование модерации рекламных сетей к посадочной -->
+    <div style="position:fixed;right:8px;bottom:6px;z-index:30;font:600 11px/1 system-ui,sans-serif;color:#B9AC97;opacity:.85;pointer-events:none;">0+</div>
+    <script type="module" src="/src/mvp.jsx"></script>
+  </body>
+</html>

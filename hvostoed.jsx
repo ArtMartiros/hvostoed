@@ -2822,9 +2822,26 @@ function RayView({ ray, from, color }) {
 }
 
 /* ---------- игра ---------- */
-function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare }) {
+function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare, mvp, onEvent }) {
   const isRec = level.mode === "record";
   const isSec = level.mode === "sections";
+  /* MVP-поток (mvp.html): mvp прячет плейтест-обвязку и кнопку меню, onEvent —
+     единственный канал наружу. Аналитика живёт на странице, а не в игре:
+     счётчики — забота mvp.html, игра лишь сообщает, что случилось. */
+  const track = (name, params) => { if (onEvent) try { onEvent(name, params); } catch (e) {} };
+  const bornRef = useRef(0);           // время входа в уровень: рестарты не обнуляют,
+  const movesRef = useRef(0);          // застревание меряется целиком; ходы — ref, как hintsRef
+  const firstMovedRef = useRef(false); // level_start уходит сам при открытии, поэтому «открыл →
+  const finishNoRef = useRef(0);       // сыграл» меряет ТОЛЬКО first_move; финиш нумеруется:
+                                       // fail → undo → win даёт два level_finish на один уровень
+  const countMove = () => {
+    movesRef.current += 1;
+    if (!firstMovedRef.current) { firstMovedRef.current = true; track("first_move", { level: level.id + 1 }); }
+  };
+  useEffect(() => {
+    bornRef.current = Date.now();
+    track("level_start", { level: level.id + 1 });
+  }, []);
   const [open, setOpen] = useState(1);        // сколько комнат открыто
   const [errors, setErrors] = useState(0);    // счётчик ошибок: жизни бесконечны
   const checkpointRef = useRef(null);         // состояние на миг открытия комнаты
@@ -2935,6 +2952,9 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
        разу не добравшись до отметки, — и игрок ходит по мёртвому уровню, не зная. */
     if (!isRec && mv.finalSnakes.reduce((a, s) => a + s.cells.length, 0) < level.marks[0]) {
       clearTimeout(crashTimerRef.current);
+      track("level_finish", { level: level.id + 1, result: "fail", attempt: ++finishNoRef.current,
+        duration_sec: Math.round((Date.now() - bornRef.current) / 1000),
+        moves: movesRef.current, hints: hintsRef.current });
       setLostReason("Улетело слишком много: на поле осталось меньше клеток, чем нужно даже на первую отметку.");
       setPhase("lost");
       return;
@@ -2957,6 +2977,10 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     clearTimeout(crashTimerRef.current);
     if (isRec) { setPhase("done"); return; }
     const stars = level.marks.filter((m) => ml >= m).length;
+    track("level_finish", { level: level.id + 1, result: stars > 0 ? "win" : "fail",
+      attempt: ++finishNoRef.current,
+      duration_sec: Math.round((Date.now() - bornRef.current) / 1000),
+      moves: movesRef.current, hints: hintsRef.current });
     if (stars > 0) {
       setWonInfo({ len: ml, stars, next: level.marks.find((m) => ml < m) || null });
       setPhase("won");
@@ -2970,6 +2994,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
   // Авария: тап по змее, чей луч заблокирован. Поле не меняется,
   // но уровень завален — после тряски показываем экран поражения.
   function crash(reason, sid, ray, from) {
+    track("crash", { level: level.id + 1, cause: (ray && ray.kind) || "?" });
     setToast(reason);
     showFx({ ray, from, color: "#E05548", shakeId: sid });
     setPhase("crash");
@@ -3092,6 +3117,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
       const mv = buildEatMove(snakes, sid, ray);
       setHistory((hh) => [...hh, { snakes: clone(snakes), runBest }]);
       setLog((l) => [...l, sid]);
+      countMove();
       runMove(mv);
     } else if (ray.kind === "edge" && isSec) {
       // вылетов в комнатах нет: все змеи нужны, взгляд за край — ошибка, доска не меняется
@@ -3100,6 +3126,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
       const mv = buildLaunchMove(snakes, sid, ray);
       setHistory((hh) => [...hh, { snakes: clone(snakes), runBest }]);
       setLog((l) => [...l, sid]);
+      countMove();
       runMove(mv);
     } else if (ray.kind === "self") {
       crash(Nom + " змея смотрит на собственный хвост — уроборос запрещён.", sid, ray, s.cells[0]);
@@ -3161,6 +3188,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     }
     hintsRef.current += 1;
     setHints(hintsRef.current);
+    track("hint_click", { level: level.id + 1 });
     tapSnake(sid);
   }
 
@@ -3171,6 +3199,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     const last = history[history.length - 1];
     setHistory((hh) => hh.slice(0, -1));
     setLog((l) => l.slice(0, -1));
+    movesRef.current = Math.max(0, movesRef.current - 1);
     setSnakes(last.snakes);
     setRunBest(last.runBest != null ? last.runBest : maxLen(last.snakes));
     setPhase("idle"); setWonInfo(null); setLostReason(null);
@@ -3190,6 +3219,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     setOpen(1); setErrors(0); checkpointRef.current = null;
     clearTimeout(crashTimerRef.current);
     setSnakes(clone(level.snakes)); setHistory([]); setLog([]); setRunBest(maxLen(level.snakes));
+    movesRef.current = 0;
     hintsRef.current = 0; setHints(0); planRef.current = new Map();
     setPhase("idle"); setWonInfo(null); setLostReason(null); setCrashed(false);
     setFx(null); setToast(null); setPlus(null);
@@ -3214,8 +3244,15 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
   return (
     <div className="hv-screen">
       <header className="hv-top">
-        <button className="hv-icon" onClick={onExit} aria-label="К уровням"><ChevronLeft size={22} /></button>
-        <div className="hv-lvname"><span className="hv-lvnum">{level.id + 1}</span> {level.name}</div>
+        {mvp ? null : (
+          <button className="hv-icon" onClick={onExit} aria-label="К уровням"><ChevronLeft size={22} /></button>
+        )}
+        {/* В MVP-потоке уровни только нумеруются: названия — часть мастерской
+            и меню, казуальному игроку из рекламы они не говорят ничего. */}
+        <div className="hv-lvname">
+          <span className="hv-lvnum">{level.id + 1}</span>
+          {mvp ? " из " + level.total : " " + level.name}
+        </div>
         <button className={"hv-icon" + (hints ? " hv-hinted" : "")} onClick={hint}
           disabled={phase !== "idle"} aria-label="Подсказать ход">
           <Lightbulb size={19} />
@@ -3227,9 +3264,11 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
         <button className="hv-icon" onClick={restart} disabled={phase === "anim"} aria-label="Заново">
           <RotateCcw size={19} />
         </button>
-        <button className="hv-icon" onClick={() => setShareOpen(true)} aria-label="Отправить уровень">
-          <Flag size={18} />
-        </button>
+        {mvp ? null : (
+          <button className="hv-icon" onClick={() => setShareOpen(true)} aria-label="Отправить уровень">
+            <Flag size={18} />
+          </button>
+        )}
       </header>
 
       {isSec ? (
@@ -3337,7 +3376,9 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
                       : " — это потолок поля, больше тут не вырасти")}
               </div>
               <div className="hv-btnrow">
-                <button className="hv-btn ghost good" onClick={() => send(0)}><Star size={14} /> Нравится</button>
+                {mvp ? null : (
+                  <button className="hv-btn ghost good" onClick={() => send(0)}><Star size={14} /> Нравится</button>
+                )}
                 <button className="hv-btn ghost" onClick={restart}>Ещё раз</button>
                 {hasNext
                   ? <button className="hv-btn main" onClick={onNext}><Play size={16} /> Дальше</button>
@@ -3396,9 +3437,11 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
               <div className="hv-wontitle lost">{crashed ? "Авария!" : "Не вышло"}</div>
               <div className="hv-wonsub">{lostReason}</div>
               <div className="hv-btnrow">
-                <button className="hv-btn ghost" onClick={() => send(crashed ? 2 : 1)}>
-                  <Flag size={14} /> Прислать
-                </button>
+                {mvp ? null : (
+                  <button className="hv-btn ghost" onClick={() => send(crashed ? 2 : 1)}>
+                    <Flag size={14} /> Прислать
+                  </button>
+                )}
                 {crashed ? (
                   <button className="hv-btn ghost" onClick={forgiveCrash}>
                     <Undo2 size={15} /> Продолжить
@@ -3952,6 +3995,90 @@ export default function App() {
           onNext={() => setIdx((i) => Math.min(i + 1, levels.length - 1))}
           hasNext={idx < levels.length - 1}
           onShare={(info) => onShare(levels[Math.min(idx, levels.length - 1)], info)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---------- MVP-поток (mvp.html) ----------
+   Отдельная страница для проверки первых 10 минут на живом трафике (mvp-plan.md):
+   существующие уровни трёх паков подряд, только нумерация, без меню, мастерской
+   и плейтест-обвязки. Доски не меняются — значит, и ворота CI уже пройдены.
+   Порядок подобран по метрикам брифа: четыре безопасных обучающих → первая
+   авария на крошечном поле → порядок → переезд → вылет-страшилка → вылет-
+   инструмент → валуны → колючая → зрелищный прокат → финал-«Кольцо», где все
+   старты верны и сессия гарантированно кончается победой; «Пир» — бонус. */
+const MVP_SEQ = [
+  ["void", 0],     // Хоровод: непроваливаемое кольцо, правило учится тапом
+  ["intro", 1],    // Трое в ряд: наследование направления, любой порядок верен
+  ["intro", 2],    // Столовая: зазор — длинный обед даёт скачок роста
+  ["intro", 4],    // Глаза и шея: чтение взгляда, последний безопасный
+  ["void", 2],     // Прицел: первая авария, бесплатная и на поле 5×4
+  ["intro", 5],    // Очередь из двух: первый запирающий порядок
+  ["void", 3],     // Переезд: первое «ага» — обед издалека переезжает змею
+  ["intro", 8],    // Не в край: вылет как предупреждение
+  ["void", 4],     // Затор: вылет как инструмент, пробка читается
+  ["classic", 6],  // Валуны: первая механика рельефа, стена со щелью
+  ["classic", 7],  // Колючка: «покорми колючую, чтобы сдвинуть»
+  ["classic", 12], // Сквозняк: зрелищный прокат через пустоту
+  ["void", 9],     // Кольцо: всё поле в одну змею, все шесть стартов верны
+  ["classic", 5],  // Пир: бонус — малышка съедает почти всё поле
+];
+
+export function MvpApp() {
+  const levels = useMemo(
+    () => MVP_SEQ.map(([pid, li], i) => {
+      const lv = PACKS.find((p) => p.id === pid).levels[li];
+      return { ...lv, id: i, total: MVP_SEQ.length };
+    }), []);
+  const [idx, setIdx] = useState(0);
+  const [run, setRun] = useState(0);   // «Сыграть ещё раз» пересоздаёт Game новым ключом
+  const [finished, setFinished] = useState(false);
+  const bornRef = useRef(Date.now());
+  /* Счётчики — забота mvp.html (window.hvTrack); без него события молча гаснут,
+     и обычная сборка не знает об аналитике вообще. */
+  const track = (name, params) => {
+    try { if (typeof window !== "undefined" && window.hvTrack) window.hvTrack(name, params); } catch (e) {}
+  };
+  const onNext = () => {
+    if (idx + 1 < levels.length) { setIdx(idx + 1); return; }
+    track("demo_complete", { duration_sec: Math.round((Date.now() - bornRef.current) / 1000) });
+    setFinished(true);
+  };
+  const again = () => { bornRef.current = Date.now(); setFinished(false); setIdx(0); setRun((r) => r + 1); };
+  return (
+    <div className="hv-root">
+      <style>{CSS_TEXT}</style>
+      {finished ? (
+        <div className="hv-screen" style={{ justifyContent: "center", minHeight: "100dvh" }}>
+          <div className="hv-card">
+            <div className="hv-stars">
+              {[0, 1, 2].map((i) => (
+                <Star key={i} size={34} className="hv-star" style={{ animationDelay: i * 0.12 + "s" }}
+                  fill="#EFAF3C" color="#EFAF3C" />
+              ))}
+            </div>
+            <div className="hv-wontitle">Все уровни пройдены!</div>
+            <div className="hv-wonsub">Скоро будут следующие — игра растёт. Загляни через пару дней.</div>
+            <div className="hv-btnrow">
+              <button className="hv-btn main" onClick={again}><RotateCcw size={15} /> Сыграть ещё раз</button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <Game
+          key={run + ":" + idx}
+          mvp
+          level={levels[idx]}
+          record={0}
+          onRecord={() => {}}
+          onWin={() => {}}
+          onNext={onNext}
+          hasNext={true}
+          onExit={() => {}}
+          onShare={() => {}}
+          onEvent={track}
         />
       )}
     </div>
