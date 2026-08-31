@@ -89,6 +89,16 @@ export default defineConfig({
   // Проектная страница GitHub Pages живёт в подпапке /hvostoed/, поэтому база не корневая.
   base: "/hvostoed/",
   define: { __HV_BUILD__: JSON.stringify(buildStamp()) },
+  build: {
+    rollupOptions: {
+      // Две страницы: игра целиком и MVP-поток для теста трафика (mvp-plan.md).
+      // Плагин service worker'а подхватит вторую сам — он берёт реальный список бандлов.
+      input: {
+        main: new URL("./index.html", import.meta.url).pathname,
+        mvp: new URL("./mvp.html", import.meta.url).pathname,
+      },
+    },
+  },
   plugins: [react(), serviceWorker()],
   server: {
     port: Number(process.env.PORT) || 5173,
