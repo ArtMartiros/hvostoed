@@ -19,18 +19,23 @@
 
       /* Единственный канал из игры наружу: игра зовёт hvTrack(name, params),
          страница раскладывает по счётчикам. В Метрику уходит всё как цели с
-         параметрами; в пиксель VK — только ключевые вехи воронки, на которые
-         можно оптимизировать кампанию. */
+         параметрами, а вехи «уровень N пройден» дублируются ОТДЕЛЬНЫМИ целями
+         level_N_win: JS-цель Метрики — это только идентификатор, шаг «level_finish
+         с level=3» в составную воронку не завернуть — по параметрам воронка не
+         строится. В пиксель VK — только вехи, на которые можно оптимизировать
+         кампанию. */
       window.hvTrack = function (name, params) {
         var A = window.HV_ANALYTICS;
+        var mile = name === "level_finish" && params && params.result === "win" &&
+          (params.level === 1 || params.level === 3 || params.level === 8 || params.level === 14);
         try {
-          if (A.YM_ID && window.ym) ym(A.YM_ID, "reachGoal", name, params || {});
+          if (A.YM_ID && window.ym) {
+            ym(A.YM_ID, "reachGoal", name, params || {});
+            if (mile) ym(A.YM_ID, "reachGoal", "level_" + params.level + "_win");
+          }
           if (A.TMR_ID) {
             var goal = null;
-            if (name === "level_finish" && params && params.result === "win" &&
-                (params.level === 1 || params.level === 3 || params.level === 8)) {
-              goal = "level_" + params.level + "_done";
-            }
+            if (mile && params.level !== 14) goal = "level_" + params.level + "_done";
             if (name === "demo_complete") goal = "demo_complete";
             if (goal) (window._tmr = window._tmr || []).push({ id: A.TMR_ID, type: "reachGoal", goal: goal });
           }

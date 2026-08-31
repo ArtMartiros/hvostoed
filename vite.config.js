@@ -20,8 +20,15 @@ function buildStamp() {
    только после сборки. Список, набитый вручную, разойдётся с первым же билдом,
    и офлайн тихо перестанет работать.
 
-   Версия кэша — хеш от самого списка. Ничего не изменилось — версия та же и кэш
-   не перезаливается; изменился хоть один файл — версия новая, старый кэш сносится.
+   Хук — writeBundle, а не generateBundle, и это оплачено ошибкой: html-страницы
+   Vite эмитит своим post-плагином ПОСЛЕ чужих generateBundle, поэтому mvp.html
+   и index.html в список не попадали — офлайн-переход на mvp.html отдавал фолбэк
+   с ГЛАВНОЙ игрой. В writeBundle всё уже лежит на диске, сканируем dist целиком.
+
+   Версия кэша — хеш от СОДЕРЖИМОГО файлов, не от списка имён: правка одного
+   лишь mvp.html (например, вписали ID счётчиков) не меняет ни одного имени, и
+   версия-от-списка залипала бы — повторный посетитель вечно видел бы страницу
+   без аналитики из старого кэша.
 
    skipWaiting + clients.claim: новый worker забирает управление сразу. Иначе
    классическая беда — человек не понимает, почему правки не приезжают неделями.
@@ -34,16 +41,18 @@ function serviceWorker() {
       e.isDirectory() ? walk(path.join(dir, e.name), base + e.name + "/") : [base + e.name]
     );
   };
+  let outDir = "dist";
   return {
     name: "hv-service-worker",
     apply: "build",
-    generateBundle(_opts, bundle) {
-      // содержимое public/ копируется мимо бандла, поэтому берём его с диска
-      const fromPublic = walk("public").filter((f) => f !== "manifest.webmanifest");
-      const fromBundle = Object.keys(bundle).filter((n) => !n.endsWith(".map"));
-      const files = ["./", "manifest.webmanifest", ...fromBundle, ...fromPublic].sort();
-      const version = "hv-" + crypto.createHash("sha1").update(files.join("|")).digest("hex").slice(0, 12);
-      this.emitFile({ type: "asset", fileName: "sw.js", source: `/* сгенерирован сборкой, править бесполезно */
+    configResolved(c) { outDir = c.build.outDir; },
+    writeBundle() {
+      const onDisk = walk(outDir).filter((f) => f !== "sw.js" && !f.endsWith(".map")).sort();
+      const files = ["./", ...onDisk];
+      const h = crypto.createHash("sha1");
+      for (const f of onDisk) { h.update(f); h.update(fs.readFileSync(path.join(outDir, f))); }
+      const version = "hv-" + h.digest("hex").slice(0, 12);
+      fs.writeFileSync(path.join(outDir, "sw.js"), `/* сгенерирован сборкой, править бесполезно */
 const V = ${JSON.stringify(version)};
 const FILES = ${JSON.stringify(files)};
 const HOME = new URL("./", self.location).href;
@@ -80,7 +89,7 @@ self.addEventListener("fetch", (e) => {
     }).catch(() => (req.mode === "navigate" ? caches.match(HOME, { ignoreVary: true }) : Promise.reject(new Error("офлайн")))))
   );
 });
-` });
+`);
     },
   };
 }
@@ -92,7 +101,7 @@ export default defineConfig({
   build: {
     rollupOptions: {
       // Две страницы: игра целиком и MVP-поток для теста трафика (mvp-plan.md).
-      // Плагин service worker'а подхватит вторую сам — он берёт реальный список бандлов.
+      // Service worker берёт обе из скана готового dist (writeBundle в плагине выше).
       input: {
         main: new URL("./index.html", import.meta.url).pathname,
         mvp: new URL("./mvp.html", import.meta.url).pathname,

@@ -2831,6 +2831,13 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
   const track = (name, params) => { if (onEvent) try { onEvent(name, params); } catch (e) {} };
   const bornRef = useRef(0);           // время входа в уровень: рестарты не обнуляют,
   const movesRef = useRef(0);          // застревание меряется целиком; ходы — ref, как hintsRef
+  const firstMovedRef = useRef(false); // level_start уходит сам при открытии, поэтому «открыл →
+  const finishNoRef = useRef(0);       // сыграл» меряет ТОЛЬКО first_move; финиш нумеруется:
+                                       // fail → undo → win даёт два level_finish на один уровень
+  const countMove = () => {
+    movesRef.current += 1;
+    if (!firstMovedRef.current) { firstMovedRef.current = true; track("first_move", { level: level.id + 1 }); }
+  };
   useEffect(() => {
     bornRef.current = Date.now();
     track("level_start", { level: level.id + 1 });
@@ -2945,7 +2952,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
        разу не добравшись до отметки, — и игрок ходит по мёртвому уровню, не зная. */
     if (!isRec && mv.finalSnakes.reduce((a, s) => a + s.cells.length, 0) < level.marks[0]) {
       clearTimeout(crashTimerRef.current);
-      track("level_finish", { level: level.id + 1, result: "fail",
+      track("level_finish", { level: level.id + 1, result: "fail", attempt: ++finishNoRef.current,
         duration_sec: Math.round((Date.now() - bornRef.current) / 1000),
         moves: movesRef.current, hints: hintsRef.current });
       setLostReason("Улетело слишком много: на поле осталось меньше клеток, чем нужно даже на первую отметку.");
@@ -2971,6 +2978,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
     if (isRec) { setPhase("done"); return; }
     const stars = level.marks.filter((m) => ml >= m).length;
     track("level_finish", { level: level.id + 1, result: stars > 0 ? "win" : "fail",
+      attempt: ++finishNoRef.current,
       duration_sec: Math.round((Date.now() - bornRef.current) / 1000),
       moves: movesRef.current, hints: hintsRef.current });
     if (stars > 0) {
@@ -3109,7 +3117,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
       const mv = buildEatMove(snakes, sid, ray);
       setHistory((hh) => [...hh, { snakes: clone(snakes), runBest }]);
       setLog((l) => [...l, sid]);
-      movesRef.current += 1;
+      countMove();
       runMove(mv);
     } else if (ray.kind === "edge" && isSec) {
       // вылетов в комнатах нет: все змеи нужны, взгляд за край — ошибка, доска не меняется
@@ -3118,7 +3126,7 @@ function Game({ level, onExit, onWin, onNext, hasNext, record, onRecord, onShare
       const mv = buildLaunchMove(snakes, sid, ray);
       setHistory((hh) => [...hh, { snakes: clone(snakes), runBest }]);
       setLog((l) => [...l, sid]);
-      movesRef.current += 1;
+      countMove();
       runMove(mv);
     } else if (ray.kind === "self") {
       crash(Nom + " змея смотрит на собственный хвост — уроборос запрещён.", sid, ray, s.cells[0]);
@@ -4038,7 +4046,7 @@ export function MvpApp() {
     track("demo_complete", { duration_sec: Math.round((Date.now() - bornRef.current) / 1000) });
     setFinished(true);
   };
-  const again = () => { setFinished(false); setIdx(0); setRun((r) => r + 1); };
+  const again = () => { bornRef.current = Date.now(); setFinished(false); setIdx(0); setRun((r) => r + 1); };
   return (
     <div className="hv-root">
       <style>{CSS_TEXT}</style>
