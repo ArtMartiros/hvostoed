@@ -66,7 +66,7 @@ sections: [{ x, y, w, h, snakes }] }` — доска открывается по
 
 | файл | что это |
 |---|---|
-| `hvostoed.jsx` | вся игра одним файлом: данные паков → логика (`raycast`/`applyEat`/`legalMoves`) → подсказка (`planGoal`/`planLongest`/`walkSids`) → отрисовка → `Game` → мастерская и ручки (`CRAFT_KNOBS`, `CraftModal`) → `Menu` → `App` → CSS |
+| `hvostoed.jsx` | вся игра одним файлом: данные паков → логика (`raycast`/`applyEat`/`legalMoves`) → подсказка (`planGoal`/`planLongest`/`walkSids`) → операции «Ручного» (`edRun`/`edCut`/`edRetreat`: обратное построение руками, каждая правка проверяется прогоном плана кодом игры) → отрисовка → `Game` → мастерская и ручки (`CRAFT_KNOBS`, `CraftModal`) → экран «Ручной» (`HandCraft`) → `Menu` → `App` → CSS |
 | `src/main.jsx`, `index.html`, `vite.config.js` | обвязка Vite; плагин пишет service worker по реальному списку бандлов, отсюда офлайн |
 | `mvp.html`, `src/mvp.jsx` | вторая страница сборки: MVP-поток `MvpApp` (14 уровней подряд, только номера) для теста трафика; счётчики аналитики живут в mvp.html (`HV_ANALYTICS`/`hvTrack`), игра шлёт события через `onEvent` |
 | `generator.mjs` | генератор уровней обратным построением, механика и формула отметок `marksOf` — общие с игрой |

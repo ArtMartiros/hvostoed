@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Undo2, RotateCcw, Star, Play, Lightbulb, Wand2, Copy, Trash2, X, Sliders, Flag } from "lucide-react";
+import { ChevronLeft, Undo2, Redo2, RotateCcw, Star, Play, Pause, Lightbulb, Wand2, Copy, Trash2, X, Sliders, Flag, PenLine } from "lucide-react";
 import { PRESETS, craftOnce, voidCeiling } from "./presets.mjs";
 import { marksOf } from "./generator.mjs";
 import { encode as encodeShare, CFG_KEYS, REASONS } from "./sharecode.mjs";
@@ -1117,13 +1117,14 @@ const knobsOf = (c) => {
 };
 
 const craftedToLevel = (c, i) => {
-  const raw = { ...c, rocks: [], bridges: c.bridges || [], turns: c.turns || [], portals: c.portals || [] };
+  // валунов генератор не кладёт, но «Ручной» — кладёт; у старых записей поля нет
+  const raw = { ...c, rocks: c.rocks || [], bridges: c.bridges || [], turns: c.turns || [], portals: c.portals || [] };
   const colors = paintPack(raw);
   // В копилке лежат уровни, собранные прошлыми версиями: у них есть только цель.
   // Достраиваем отметки, иначе такой уровень уронит экран на level.marks.
   const ceiling = c.ceiling || c.target;
   const marks = c.marks || marksOf(ceiling, Math.max(...c.snakes.map((sn) => sn.cells.length)));
-  return { ...raw, id: i, rocks: [], bridges: c.bridges || [], turns: c.turns || [],
+  return { ...raw, id: i, rocks: c.rocks || [], bridges: c.bridges || [], turns: c.turns || [],
     portals: c.portals || [], plan: c.plan || null,
     ceiling, marks, target: c.mode === "record" ? undefined : marks[0],
     snakes: c.snakes.map((sn, si) =>
@@ -1133,7 +1134,7 @@ const craftedToLevel = (c, i) => {
 
 const craftedToText = (c) => `  {
     name: ${JSON.stringify(c.name)}, lesson: ${JSON.stringify(c.lesson)},
-    w: ${c.w}, h: ${c.h}, ${c.bridges && c.bridges.length ? `bridges: [${c.bridges.map(([x, y]) => `[${x}, ${y}]`).join(", ")}], ` : ""}${c.turns && c.turns.length ? `turns: [${c.turns.map(([x, y, a, b]) => `[${x}, ${y}, "${a}", "${b}"]`).join(", ")}], ` : ""}${c.portals && c.portals.length ? `portals: [${c.portals.map((p) => `[${p.join(", ")}]`).join(", ")}], ` : ""}${c.mode === "record" ? `ceiling: ${c.ceiling}, proof: "beam", mass: ${c.mass}, marks: ${JSON.stringify(c.marks)}` : `ceiling: ${c.ceiling}`},
+    w: ${c.w}, h: ${c.h}, ${c.rocks && c.rocks.length ? `rocks: [${c.rocks.map(([x, y]) => `[${x}, ${y}]`).join(", ")}], ` : ""}${c.bridges && c.bridges.length ? `bridges: [${c.bridges.map(([x, y]) => `[${x}, ${y}]`).join(", ")}], ` : ""}${c.turns && c.turns.length ? `turns: [${c.turns.map(([x, y, a, b]) => `[${x}, ${y}, "${a}", "${b}"]`).join(", ")}], ` : ""}${c.portals && c.portals.length ? `portals: [${c.portals.map((p) => `[${p.join(", ")}]`).join(", ")}], ` : ""}${c.mode === "record" ? `ceiling: ${c.ceiling}, proof: "beam", mass: ${c.mass}, marks: ${JSON.stringify(c.marks)}` : `ceiling: ${c.ceiling}`},
     plan: ${JSON.stringify(c.plan || [])},
     snakes: [
 ${c.snakes.map((sn) => "      { " + (sn.spiky ? "spiky: true, " : "") + (sn.apple ? "apple: true, " : "") + (sn.sleep && !sn.apple ? "sleep: true, " : "") +
@@ -2497,6 +2498,355 @@ function buildLaunchMove(snakes, sid, ray) {
   };
 }
 
+/* ================= «Ручной» — операции редактора =================
+   Режим строит уровень тем же обратным ходом, что и генератор: на доске всегда
+   лежит НАЧАЛЬНОЕ состояние партии, план — список обедов от первого к последнему,
+   и первый сделанный разрез — это ПОСЛЕДНИЙ ход решения. Правку судит не
+   геометрия редактора, а прогон плана кодом самой игры (edRun): не прошёл —
+   правка не случилась. Так изгибы, порталы, мосты и перехваты луча решает
+   raycast, а не пересказ его правил, и доска в редакторе решаема в любой момент
+   по построению — ровно как уровень из generate().
+
+   Состояние ed: { w, h, rocks, bridges, turns, portals — как в уровне;
+   snakes: [{ id, color, cells, spiky?, sleep?, apple?, decoy? }] — стартовая
+   доска; plan: [{ sid, prey }] — обеды в игровом порядке; final — клетки
+   рисунка (эталон конца партии), finalId — id змеи, которая им станет;
+   autoTiles — ключи плиток, рождённых пяткой: шаг назад забирает их с собой. */
+
+const HAND_WHY = {
+  self: "луч упирается в своё же тело",
+  rock: "луч упирается в валун",
+  edge: "луч уходит за край поля",
+  head: "луч упирается в чужую голову",
+  body: "луч упирается в чужое тело",
+  spikyTail: "хвост жертвы колючий",
+  turnBack: "луч бьётся в стенку поворота",
+  loop: "луч замкнулся в кольце порталов",
+};
+
+const edEmpty = (w, h) => ({ w, h, rocks: [], bridges: [], turns: [], portals: [],
+  snakes: [], plan: [], final: null, finalId: null, nextId: 1, autoTiles: [] });
+const edCellsEq = (a, b) => a.length === b.length && a.every((c, i) => c[0] === b[i][0] && c[1] === b[i][1]);
+const edInside = (ed, [x, y]) => x >= 0 && y >= 0 && x < ed.w && y < ed.h;
+const edOccSet = (ed) => {
+  const o = new Set();
+  for (const s of ed.snakes) for (const [x, y] of s.cells) o.add(ckey(x, y));
+  return o;
+};
+const edRockSet = (ed) => new Set(ed.rocks.map(([x, y]) => ckey(x, y)));
+const edFloorAt = (ed, [x, y]) =>
+  ed.rocks.some((c) => c[0] === x && c[1] === y) ||
+  ed.bridges.some((c) => c[0] === x && c[1] === y) ||
+  ed.turns.some((c) => c[0] === x && c[1] === y) ||
+  ed.portals.some((p) => (p[0] === x && p[1] === y) || (p[2] === x && p[3] === y));
+
+/* Прогон плана механикой игры — единственный источник правды редактора.
+   Проверяется не только «ход есть», но и что луч съедает именно ЗАДУМАННУЮ
+   жертву (иначе обманка, вставшая под луч, тихо переигрывала бы решение) и что
+   последний обед собирает в точности нарисованную змею: пятка жертвы или мост
+   под её хвостом меняют укладку — и расхождение всплывает здесь. */
+function edRun(ed) {
+  const bd = boardOf(ed);
+  const states = [clone(ed.snakes)], rays = [];
+  let sn = states[0];
+  for (let i = 0; i < ed.plan.length; i++) {
+    const mv = ed.plan[i];
+    const flunk = (why) => ({ states, rays, bad: i, why });
+    const s = sn.find((q) => q.id === mv.sid);
+    if (!s) return flunk("едок уже съеден");
+    if (s.sleep) return flunk("спящая не ходит");
+    const ray = raycast(sn, mv.sid, ed.w, ed.h, bd);
+    if (ray.kind !== "tail") return flunk(HAND_WHY[ray.kind] || "ход не выходит");
+    if (ray.target !== mv.prey) return flunk("луч перехватила другая змея");
+    rays.push({ from: s.cells[0].slice(), ray });
+    sn = applyEat(sn, mv.sid, ray);
+    states.push(sn);
+  }
+  if (ed.plan.length) {
+    const fin = sn.find((q) => q.id === ed.finalId);
+    if (!fin || !edCellsEq(fin.cells, ed.final))
+      return { states, rays, bad: ed.plan.length - 1, why: "финал расходится с рисунком" };
+  }
+  return { states, rays };
+}
+
+// тень решения: клетки, по которым летят лучи плана, и клетки, где они
+// останавливаются (хвосты жертв); сюда обманкам и полу хода нет
+function edShadow(run) {
+  const beam = new Set(), stop = new Set();
+  for (const r of run.rays) {
+    for (const [x, y] of r.ray.gap) beam.add(ckey(x, y));
+    if (r.ray.hitCell) stop.add(ckey(r.ray.hitCell[0], r.ray.hitCell[1]));
+  }
+  return { beam, stop };
+}
+
+const edRoles = (ed) => {
+  const eats = new Set(), eaten = new Set();
+  for (const m of ed.plan) { eats.add(m.sid); eaten.add(m.prey); }
+  return { eats, eaten };
+};
+
+const edNewColor = (ed, near) =>
+  ORDER[(ORDER.indexOf(near) + 1 + (ed.nextId % (ORDER.length - 2))) % ORDER.length];
+
+/* Разрез куска решения по ребру b: передние b клеток — жертва, стоит где стояла,
+   задняя часть — едок. Едок НАСЛЕДУЕТ id разрезанной змеи, поэтому поздние ходы
+   плана, ссылавшиеся на неё, продолжают работать: к их моменту она уже собрана
+   обратно этим же обедом. Новый обед всегда встаёт ПЕРВЫМ ходом плана — решение
+   строится с конца. Жертва в одну клетку — яблоко, спящее по природе. Прямизну
+   в месте разреза не проверяем: её рассудит edRun настоящим raycast. */
+function edCut(ed, sid, b) {
+  const M = ed.snakes.find((s) => s.id === sid);
+  if (!M || M.decoy || M.apple) return null;
+  const n = M.cells.length;
+  if (b < 1 || n - b < 2) return null;               // едоку нужны голова и шея
+  const B = { id: "e" + ed.nextId, color: edNewColor(ed, M.color),
+    cells: M.cells.slice(0, b).map((c) => c.slice()),
+    ...(b === 1 ? { apple: true, sleep: true } : {}) };
+  const A = { ...M, cells: M.cells.slice(b).map((c) => c.slice()) };
+  delete A.sleep;                                    // едок не спит: сон снимается разрезом
+  return { ...ed, nextId: ed.nextId + 1,
+    snakes: ed.snakes.map((s) => (s.id === sid ? A : s)).concat([B]),
+    plan: [{ sid: A.id, prey: B.id }, ...ed.plan] };
+}
+
+/* Разрез на изгибе тела: клетка сразу за жертвой уходит в зазор, на неё встаёт
+   плитка поворота, хвост едока дорастает на одну клетку — один шаг unEat
+   генератора, только руками. Возвращает УЖЕ ПРОВЕРЕННЫЙ прогоном ed и плитку
+   для призрака: ставить её или нет, решает игрок кнопкой. */
+function edCutTurn(ed, sid, b) {
+  const M = ed.snakes.find((s) => s.id === sid);
+  if (!M || M.decoy || M.apple) return null;
+  const n = M.cells.length;
+  if (b < 1 || n - b < 2) return null;
+  const g = M.cells[b];                              // будущая клетка зазора
+  const aBody = M.cells.slice(b + 1).map((c) => c.slice());
+  const hd = aBody[0], stop = M.cells[b - 1];        // голова едока и хвост жертвы
+  const sIn = sideName([hd[0] - g[0], hd[1] - g[1]]);
+  const sOut = sideName([stop[0] - g[0], stop[1] - g[1]]);
+  // прямой пролёт плитки не требует — этим местом владеет обычный разрез
+  if (SIDES[sIn][0] === -SIDES[sOut][0] && SIDES[sIn][1] === -SIDES[sOut][1]) return null;
+  if (edFloorAt(ed, g)) return null;                 // пол на клетке зазора уже занят
+  let cands;
+  if (aBody.length === 1) {
+    // едок из одной клетки на рельсе: шея — первая клетка хвоста, и взгляд
+    // задаёт она, поэтому вариант ровно один — строго напротив зазора
+    cands = [[2 * hd[0] - g[0], 2 * hd[1] - g[1]]];
+  } else {
+    if (2 * hd[0] - aBody[1][0] !== g[0] || 2 * hd[1] - aBody[1][1] !== g[1]) return null;
+    const tl = aBody[aBody.length - 1];
+    cands = [[tl[0] + 1, tl[1]], [tl[0] - 1, tl[1]], [tl[0], tl[1] + 1], [tl[0], tl[1] - 1]];
+  }
+  const tile = [g[0], g[1], sIn, sOut];
+  const occ = edOccSet(ed), rocks = edRockSet(ed);
+  for (const ext of cands) {
+    const k = ckey(ext[0], ext[1]);
+    if (!edInside(ed, ext) || occ.has(k) || rocks.has(k)) continue;
+    if (ext[0] === g[0] && ext[1] === g[1]) continue; // зазор обязан остаться пустым
+    const B = { id: "e" + ed.nextId, color: edNewColor(ed, M.color),
+      cells: M.cells.slice(0, b).map((c) => c.slice()),
+      ...(b === 1 ? { apple: true, sleep: true } : {}) };
+    const A = { ...M, cells: aBody.concat([ext]) };
+    delete A.sleep;
+    const next = { ...ed, nextId: ed.nextId + 1,
+      snakes: ed.snakes.map((s) => (s.id === sid ? A : s)).concat([B]),
+      plan: [{ sid: A.id, prey: B.id }, ...ed.plan],
+      turns: [...ed.turns, tile],
+      autoTiles: [...ed.autoTiles, ckey(g[0], g[1])] };
+    if (edRun(next).bad == null) return { ed: next, tile };
+  }
+  return null;
+}
+
+/* Пятка: голова едока сходит на tails.length клеток собственного тела — они
+   освобождаются под зазор, — а хвост дорастает клетками tails, в порядке от
+   старого хвоста дальше. Изгибы освободившегося куска собираются в предложение
+   плиток: без них луч по зазору не пройдёт, но ставит их игрок, кнопкой.
+   На бывшей голове плитка не нужна никогда: луч приходит в неё ровно тем
+   направлением, каким уходил старый. Клетки зазора для хвоста закрыты — по ним
+   полетит луч, и генератор держит тот же запрет. */
+function edRetreat(ed, sid, tails) {
+  const A = ed.snakes.find((s) => s.id === sid);
+  const k = tails.length;
+  if (!A || A.decoy || A.apple || k < 1 || A.cells.length - k < 2) return null;
+  const occ = edOccSet(ed), rocks = edRockSet(ed);
+  let prev = A.cells[A.cells.length - 1];
+  for (const c of tails) {
+    const ck2 = ckey(c[0], c[1]);
+    if (!edInside(ed, c) || occ.has(ck2) || rocks.has(ck2)) return null;
+    if (Math.abs(c[0] - prev[0]) + Math.abs(c[1] - prev[1]) !== 1) return null;
+    occ.add(ck2);
+    prev = c;
+  }
+  const tiles = [];
+  let bendOk = true;
+  for (let i = k - 1; i >= 1; i--) {
+    const c = A.cells[i], p = A.cells[i + 1], nx = A.cells[i - 1];
+    const din = [p[0] - c[0], p[1] - c[1]], dout = [nx[0] - c[0], nx[1] - c[1]];
+    if (din[0] === -dout[0] && din[1] === -dout[1]) continue;
+    if (edFloorAt(ed, c)) { bendOk = false; break; } // изгиб на занятом полу не согнуть
+    tiles.push([c[0], c[1], sideName(din), sideName(dout)]);
+  }
+  const next = { ...ed, snakes: ed.snakes.map((s) =>
+    (s.id === sid ? { ...s, cells: A.cells.slice(k).concat(tails.map((c) => c.slice())) } : s)) };
+  return { ed: next, tiles: bendOk ? tiles : null, freed: A.cells.slice(0, k) };
+}
+
+/* Обратный шаг пятки: голова наползает на первую клетку своего луча, хвост
+   втягивается. Плитку, рождённую пяткой, шаг назад забирает с собой —
+   поставленные руками остаются. */
+function edAdvance(ed, sid) {
+  const A = ed.snakes.find((s) => s.id === sid);
+  if (!A || A.decoy || A.apple || A.cells.length < 2) return null;
+  const f = facing(A.cells);
+  const p = [A.cells[0][0] + f[0], A.cells[0][1] + f[1]];
+  if (!edInside(ed, p)) return null;
+  const pk = ckey(p[0], p[1]);
+  if (edOccSet(ed).has(pk) || edRockSet(ed).has(pk)) return null;
+  let turns = ed.turns, autoTiles = ed.autoTiles;
+  if (autoTiles.includes(pk)) {
+    turns = turns.filter(([x, y]) => ckey(x, y) !== pk);
+    autoTiles = autoTiles.filter((q) => q !== pk);
+  }
+  return { ...ed, turns, autoTiles, snakes: ed.snakes.map((s) =>
+    (s.id === sid ? { ...s, cells: [p, ...A.cells.slice(0, -1).map((c) => c.slice())] } : s)) };
+}
+
+function edSetStatus(ed, sid, st) {
+  return { ...ed, snakes: ed.snakes.map((s) => {
+    if (s.id !== sid || s.apple) return s;
+    const q = { ...s };
+    delete q.spiky; delete q.sleep;
+    if (st === "spiky") q.spiky = true;
+    if (st === "sleep") q.sleep = true;
+    return q;
+  }) };
+}
+
+function edAddDecoy(ed, cells) {
+  const s = { id: "e" + ed.nextId, decoy: true,
+    color: ORDER[(ed.nextId * 5 + 2) % ORDER.length],
+    cells: cells.map((c) => c.slice()),
+    ...(cells.length === 1 ? { apple: true, sleep: true } : {}) };
+  return { ...ed, nextId: ed.nextId + 1, snakes: [...ed.snakes, s] };
+}
+
+const edDropDecoy = (ed, sid) => {
+  const s = ed.snakes.find((q) => q.id === sid);
+  if (!s || !s.decoy) return null;
+  return { ...ed, snakes: ed.snakes.filter((q) => q.id !== sid) };
+};
+
+/* Валун, мост и плитка кладутся и снимаются тапом; плитка тапами крутится по
+   четырём углам и лишь после снимается. Валун под тело не встаёт, мост и
+   плитка — могут: лежащая змея честно их перекрывает. Сломает ли пол чей-то
+   луч — не наша забота: прогон отклонит правку. */
+const HAND_TURNS = [["n", "e"], ["e", "s"], ["s", "w"], ["w", "n"]];
+function edToggleFloor(ed, tool, x, y) {
+  const same = (c) => c[0] === x && c[1] === y;
+  if (tool === "rock") {
+    if (ed.rocks.some(same)) return { ...ed, rocks: ed.rocks.filter((c) => !same(c)) };
+    if (edFloorAt(ed, [x, y]) || edOccSet(ed).has(ckey(x, y))) return null;
+    return { ...ed, rocks: [...ed.rocks, [x, y]] };
+  }
+  if (tool === "bridge") {
+    if (ed.bridges.some(same)) return { ...ed, bridges: ed.bridges.filter((c) => !same(c)) };
+    if (edFloorAt(ed, [x, y])) return null;
+    return { ...ed, bridges: [...ed.bridges, [x, y]] };
+  }
+  if (tool === "turn") {
+    const cur = ed.turns.findIndex(same);
+    if (cur >= 0) {
+      const [, , a, b] = ed.turns[cur];
+      const at = HAND_TURNS.findIndex(([p, q]) => p === a && q === b);
+      const rest = ed.turns.filter((_, i) => i !== cur);
+      const auto = ed.autoTiles.filter((q) => q !== ckey(x, y)); // тронул руками — плитка теперь ручная
+      if (at >= 0 && at < HAND_TURNS.length - 1)
+        return { ...ed, autoTiles: auto, turns: [...rest, [x, y, ...HAND_TURNS[at + 1]]] };
+      return { ...ed, autoTiles: auto, turns: rest };
+    }
+    if (edFloorAt(ed, [x, y])) return null;
+    return { ...ed, turns: [...ed.turns, [x, y, "n", "e"]] };
+  }
+  return null;
+}
+
+// портал ставится двумя тапами: вход, потом выход; тап по готовому — снятие пары
+function edPortalTap(ed, from, x, y) {
+  const hit = ed.portals.findIndex((p) => (p[0] === x && p[1] === y) || (p[2] === x && p[3] === y));
+  if (hit >= 0) return { ed: { ...ed, portals: ed.portals.filter((_, i) => i !== hit) } };
+  if (edFloorAt(ed, [x, y])) return null;
+  if (!from) return { from: [x, y] };
+  if (from[0] === x && from[1] === y) return null;
+  return { ed: { ...ed, portals: [...ed.portals, [from[0], from[1], x, y]] } };
+}
+
+/* Живая ли обманка: у неё либо есть обед, либо её хвост стоит под чьим-то
+   лучом (колючий — тоже: приманка и должна колоть). Мёртвая — мебель;
+   в песочнице это не запрет, а честная серая точка. */
+function edLively(ed) {
+  const sn = clone(ed.snakes), bd = boardOf(ed);
+  const rc = new Map();
+  for (const s of sn) if (!s.sleep) rc.set(s.id, raycast(sn, s.id, ed.w, ed.h, bd));
+  const out = new Set();
+  for (const s of sn) {
+    if (!s.decoy) continue;
+    const own = rc.get(s.id);
+    if (own && own.kind === "tail") { out.add(s.id); continue; }
+    for (const [sid, r] of rc)
+      if (sid !== s.id && (r.kind === "tail" || r.kind === "spikyTail") && r.target === s.id) {
+        out.add(s.id);
+        break;
+      }
+  }
+  return out;
+}
+
+/* Ручной уровень в копилку мастерской: тот же формат, что у сгенерированных, —
+   с планом, отметками и уроком, — поэтому подсказка, карточка пака и обмен
+   работают без единой правки. Потолок для звёзд: авторский план даёт длину
+   рисунка по построению (и walkSids это подтверждает кодом игры), а поверх
+   пускаем лучевой поиск: обманки съедобны, и доска может дотягиваться выше
+   задуманного — тогда потолок честно поднимается, как в рекордных пресетах. */
+function handToCrafted(ed, ordinal) {
+  const snakes = ed.snakes.map((s) => ({
+    cells: s.cells.map((c) => c.slice()),
+    ...(s.spiky ? { spiky: true } : {}),
+    ...(s.apple ? { apple: true, sleep: true } : s.sleep ? { sleep: true } : {}),
+  }));
+  const idOf = new Map(ed.snakes.map((s, i) => [s.id, "s" + i]));
+  const plan = ed.plan.map((m) => idOf.get(m.sid));
+  const lvl = { w: ed.w, h: ed.h }, bd = boardOf(ed);
+  const got = walkSids(lvl, withIds(snakes), plan, bd);
+  if (got.bad || got.len < ed.final.length) return null;
+  let ceiling = ed.final.length;
+  const beam = planLongest(lvl, withIds(snakes), bd);
+  if (beam) {
+    const rp = replayPlan(lvl, withIds(snakes), beam, bd);
+    if (!rp.broken && rp.len > ceiling) ceiling = rp.len;
+  }
+  const marks = marksOf(ceiling, Math.max(...snakes.map((s) => s.cells.length)));
+  const мех = [];
+  if (snakes.some((s) => s.apple)) мех.push("яблоки");
+  if (snakes.some((s) => s.spiky)) мех.push("колючие");
+  if (snakes.some((s) => s.sleep && !s.apple)) мех.push("спящие");
+  if (ed.rocks.length) мех.push("валуны");
+  if (ed.bridges.length) мех.push("мосты");
+  if (ed.turns.length) мех.push("повороты");
+  if (ed.portals.length) мех.push("порталы");
+  return { w: ed.w, h: ed.h, snakes,
+    rocks: ed.rocks.map((c) => c.slice()),
+    bridges: ed.bridges.map((c) => c.slice()),
+    turns: ed.turns.map((t) => t.slice()),
+    portals: ed.portals.map((p) => p.slice()),
+    preset: "ручной", seed: 0, cfg: null,
+    name: "Ручной " + ordinal, mode: "goal",
+    ceiling, marks, target: marks[0], plan,
+    lesson: "Свой уровень, нарисован руками · задумано " + ходов(ed.plan.length)
+      + (мех.length ? " · " + мех.join(", ") : "") };
+}
+
 /* ---------- геометрия для плавного скольжения ---------- */
 const toPx = ([x, y]) => [x * CS + CS / 2, y * CS + CS / 2];
 
@@ -3694,6 +4044,528 @@ function CraftModal({ base, cfg, onSet, onClose, onGo, onReset, busy, fail }) {
   );
 }
 
+/* ---------- «Ручной» — экран ----------
+   Жесты поверх операций ядра: палец рисует финальную змею, засечки режут её на
+   ходы, хвост едока тянется — и голова пятится, освобождая зазор. Каждая правка
+   проходит через commit → edRun, поэтому доска в редакторе решаема всегда, а
+   плитку на изгибе ставит не редактор молча, а игрок кнопкой по призраку. */
+
+const HAND_TOOLS = [
+  ["edit", "Правка"], ["decoy", "Обманка"], ["rock", "Валун"],
+  ["bridge", "Мост"], ["turn", "Поворот"], ["portal", "Портал"],
+];
+const handColor = (s) => (s.apple ? "apple" : s.spiky ? "spiky" : s.sleep ? "sleepy" : s.color);
+
+function HandCraft({ ordinal, onSave, onExit }) {
+  const [ed, setEd] = useState(() => {
+    try {
+      const q = JSON.parse(localStorage.getItem("hv-hand") || "null");
+      if (q && q.w && q.h && Array.isArray(q.snakes) && Array.isArray(q.plan))
+        return { ...edEmpty(q.w, q.h), ...q, autoTiles: q.autoTiles || [] };
+    } catch (e) {}
+    return edEmpty(7, 9);
+  });
+  const [tool, setTool] = useState("edit");
+  const [sel, setSel] = useState(null);
+  const [draw, setDraw] = useState(null);          // рисуемая пальцем змея: { kind, cells }
+  const [timeIdx, setTimeIdx] = useState(0);       // машина времени: 0 — старт партии
+  const [playing, setPlaying] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [pend, setPend] = useState(null);          // предложение плитки: { ed, tiles, why }
+  const [gateFrom, setGateFrom] = useState(null);
+  const [undoS, setUndoS] = useState([]);
+  const [redoS, setRedoS] = useState([]);
+  const dragRef = useRef(null);                    // пятка: { sid, base, pend: [клетки хвоста] }
+  const svgRef = useRef(null);
+  const regRef = useRef({});
+  const toastRef = useRef(null);
+
+  useEffect(() => {
+    try { localStorage.setItem("hv-hand", JSON.stringify(ed)); } catch (e) {}
+  }, [ed]);
+  useEffect(() => () => clearTimeout(toastRef.current), []);
+
+  const run = useMemo(() => edRun(ed), [ed]);
+  const shadow = useMemo(() => edShadow(run), [run]);
+  const roles = useMemo(() => edRoles(ed), [ed]);
+  const lively = useMemo(() => edLively(ed), [ed]);
+  const occSet = useMemo(() => edOccSet(ed), [ed]);
+  const rockSet = useMemo(() => edRockSet(ed), [ed]);
+  // клетки, закрытые для обманок: лучи и стоп-клетки решения; мост запрет снимает —
+  // луч летит над ним, и генератор сажает обманок ровно туда же
+  const shadowSet = useMemo(() => {
+    const s = new Set([...shadow.beam, ...shadow.stop]);
+    for (const [x, y] of ed.bridges) s.delete(ckey(x, y));
+    return s;
+  }, [shadow, ed]);
+
+  const shown = run.states[Math.min(timeIdx, run.states.length - 1)];
+  const editable = timeIdx === 0 && !playing;
+  const selSnake = sel != null ? ed.snakes.find((s) => s.id === sel) : null;
+  const showShadow = editable && tool !== "edit";
+
+  function flash(msg) {
+    clearTimeout(toastRef.current);
+    setToast(msg);
+    toastRef.current = setTimeout(() => setToast(null), 4000);
+  }
+
+  function commit(next, quiet) {
+    if (!next) { if (!quiet) flash("Сюда нельзя."); return false; }
+    const r = edRun(next);
+    if (r.bad != null) { flash("Не выйдет: " + r.why + " (ход " + (r.bad + 1) + ")."); return false; }
+    setUndoS((u) => [...u.slice(-79), ed]);
+    setRedoS([]);
+    setEd(next);
+    setPend(null); setTimeIdx(0); setPlaying(false);
+    return true;
+  }
+
+  function doUndo() {
+    if (!undoS.length) return;
+    setRedoS((r) => [...r, ed]);
+    setEd(undoS[undoS.length - 1]);
+    setUndoS(undoS.slice(0, -1));
+    setSel(null); setPend(null); setDraw(null); setTimeIdx(0); setPlaying(false);
+  }
+  function doRedo() {
+    if (!redoS.length) return;
+    setUndoS((u) => [...u, ed]);
+    setEd(redoS[redoS.length - 1]);
+    setRedoS(redoS.slice(0, -1));
+    setSel(null); setPend(null); setDraw(null); setTimeIdx(0); setPlaying(false);
+  }
+  function clearAll() {
+    if (!ed.snakes.length && !ed.rocks.length && !ed.bridges.length && !ed.turns.length && !ed.portals.length) return;
+    commit(edEmpty(ed.w, ed.h));
+    setSel(null); setGateFrom(null);
+    flash("Стёрто. Отмена вернёт всё назад.");
+  }
+
+  // размер поля крутится только до рисунка: пределы — те же, что у ручек генератора
+  function sizeStep(k, d) {
+    if (ed.final) { flash("Размер меняется до рисунка змеи. Сотри доску, чтобы начать заново."); return; }
+    const lim = k === "w" ? [5, 14] : [5, 18];
+    const v = Math.max(lim[0], Math.min(lim[1], ed[k] + d));
+    if (v === ed[k]) return;
+    const inW = (q) => q[0] < (k === "w" ? v : ed.w) && q[1] < (k === "h" ? v : ed.h);
+    commit({ ...ed, [k]: v,
+      rocks: ed.rocks.filter(inW),
+      bridges: ed.bridges.filter(inW),
+      turns: ed.turns.filter(inW),
+      portals: ed.portals.filter((p) => inW(p) && inW([p[2], p[3]])),
+      snakes: ed.snakes.filter((s) => s.cells.every(inW)) });
+  }
+
+  const freeCell = (c) => edInside(ed, c) && !occSet.has(ckey(c[0], c[1])) && !rockSet.has(ckey(c[0], c[1]));
+
+  function cellAt(e) {
+    const el = svgRef.current;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const x = Math.floor(((e.clientX - r.left) / r.width) * ed.w);
+    const y = Math.floor(((e.clientY - r.top) / r.height) * ed.h);
+    if (x < 0 || y < 0 || x >= ed.w || y >= ed.h) return null;
+    return [x, y];
+  }
+
+  /* Разрезы выделенной змеи: на каждое ребро пробуем обычный разрез, а где тело
+     гнётся — разрез с поворотом. Оба варианта уже проверены прогоном, так что
+     засечка на доске — это обещание, которое точно сдержится. */
+  const cuts = useMemo(() => {
+    if (!selSnake || selSnake.decoy || selSnake.apple || !editable || tool !== "edit") return [];
+    const out = [];
+    for (let b = 1; b <= selSnake.cells.length - 2; b++) {
+      const plain = edCut(ed, sel, b);
+      if (plain && edRun(plain).bad == null) { out.push({ b, ed: plain }); continue; }
+      const bent = edCutTurn(ed, sel, b);
+      if (bent) out.push({ b, ...bent, needTurn: true });
+    }
+    return out;
+  }, [ed, sel, selSnake, editable, tool]);
+
+  function onCut(c) {
+    if (c.needTurn) {
+      setPend({ ed: c.ed, tiles: [c.tile], why: "Разрез на изгибе: лучу нужен поворот." });
+      return;
+    }
+    commit(c.ed);
+  }
+
+  function commitPend() {
+    if (!pend) return;
+    commit(pend.ed);
+  }
+
+  function tapSnake(sid) {
+    if (!editable) return;
+    setPend(null); setToast(null); setGateFrom(null);
+    setSel(sid === sel ? null : sid);
+  }
+
+  function tailDown(e, sid) {
+    e.stopPropagation();
+    if (!editable) return;
+    setSel(sid); setPend(null); setToast(null);
+    dragRef.current = { sid, base: ed, pend: [] };
+  }
+
+  function boardDown(e) {
+    setPend(null); setToast(null);
+    if (!editable) return;
+    const c = cellAt(e);
+    if (!c) return;
+    if (tool === "rock" || tool === "bridge" || tool === "turn") { commit(edToggleFloor(ed, tool, c[0], c[1])); return; }
+    if (tool === "portal") {
+      const r = edPortalTap(ed, gateFrom, c[0], c[1]);
+      if (!r) { flash("Сюда портал не встаёт."); return; }
+      if (r.from) { setGateFrom(r.from); flash("Вход поставлен — тапни клетку выхода."); return; }
+      setGateFrom(null);
+      commit(r.ed);
+      return;
+    }
+    if (tool === "decoy") {
+      if (freeCell(c) && !shadowSet.has(ckey(c[0], c[1]))) setDraw({ kind: "decoy", cells: [c] });
+      return;
+    }
+    if (!ed.final) {
+      if (freeCell(c)) setDraw({ kind: "final", cells: [c] });
+      return;
+    }
+    setSel(null);
+  }
+
+  function boardMove(e) {
+    const dr = dragRef.current;
+    if (dr) { dragMove(e, dr); return; }
+    if (!draw) return;
+    const c = cellAt(e);
+    if (!c) return;
+    setDraw((d) => {
+      if (!d) return d;
+      const cs = d.cells, last = cs[cs.length - 1];
+      if (c[0] === last[0] && c[1] === last[1]) return d;
+      const pv = cs[cs.length - 2];
+      if (pv && c[0] === pv[0] && c[1] === pv[1]) return { ...d, cells: cs.slice(0, -1) }; // шаг назад — стирание
+      if (Math.abs(c[0] - last[0]) + Math.abs(c[1] - last[1]) !== 1) return d;
+      if (cs.some(([x, y]) => x === c[0] && y === c[1])) return d;
+      if (!freeCell(c)) return d;
+      if (d.kind === "decoy" && shadowSet.has(ckey(c[0], c[1]))) return d;
+      return { ...d, cells: [...cs, c] };
+    });
+  }
+
+  /* Жест пятки. Обычный шаг — одна клетка; на изгибе шаг не проходит, и клетки
+     копятся в dr.pend, пока зазор с плитками не соберётся целиком — тогда вместо
+     тихого коммита появляется призрак и кнопка. Отпустил палец с недобранным
+     изгибом — недобор просто забыт. */
+  function dragMove(e, dr) {
+    const c = cellAt(e);
+    if (!c) return;
+    const A = ed.snakes.find((s) => s.id === dr.sid);
+    if (!A) { dragRef.current = null; return; }
+    const tl = A.cells[A.cells.length - 1];
+    if (c[0] === tl[0] && c[1] === tl[1]) return;
+    const pv = A.cells[A.cells.length - 2];
+    if (!dr.pend.length && pv && c[0] === pv[0] && c[1] === pv[1]) {
+      const next = edAdvance(ed, dr.sid);
+      if (next && edRun(next).bad == null) setEd(next);
+      return;
+    }
+    const anchor = dr.pend.length ? dr.pend[dr.pend.length - 1] : tl;
+    if (Math.abs(c[0] - anchor[0]) + Math.abs(c[1] - anchor[1]) !== 1) return;
+    if (dr.pend.some(([x, y]) => x === c[0] && y === c[1])) return;
+    const tails = [...dr.pend, c];
+    const r = edRetreat(ed, dr.sid, tails);
+    if (!r) return;
+    if (edRun(r.ed).bad == null) { dr.pend = []; setEd(r.ed); return; }
+    if (r.tiles && r.tiles.length) {
+      const withT = { ...r.ed, turns: [...r.ed.turns, ...r.tiles],
+        autoTiles: [...r.ed.autoTiles, ...r.tiles.map(([x, y]) => ckey(x, y))] };
+      if (edRun(withT).bad == null) {
+        if (dr.base !== ed) { setUndoS((u) => [...u.slice(-79), dr.base]); setRedoS([]); }
+        setPend({ ed: withT, tiles: r.tiles, why: "Луч гнётся на зазоре: нужен поворот." });
+        dragRef.current = null;
+        return;
+      }
+    }
+    if (tails.length < 4) dr.pend = tails;
+  }
+
+  function boardUp() {
+    const dr = dragRef.current;
+    if (dr) {
+      dragRef.current = null;
+      if (dr.base !== ed) { setUndoS((u) => [...u.slice(-79), dr.base]); setRedoS([]); }
+      return;
+    }
+    if (!draw) return;
+    const d = draw;
+    setDraw(null);
+    if (d.kind === "final") {
+      if (d.cells.length < 3) { flash("Финальной змее нужно от трёх клеток: короче резать нечего."); return; }
+      const s = { id: "e" + ed.nextId, color: "green", cells: d.cells.map((c) => c.slice()) };
+      commit({ ...ed, nextId: ed.nextId + 1, snakes: [...ed.snakes, s],
+        final: d.cells.map((c) => c.slice()), finalId: s.id });
+      return;
+    }
+    commit(edAddDecoy(ed, d.cells));
+  }
+
+  function setStatus(st) {
+    if (!selSnake) return;
+    if (st === "sleep" && roles.eats.has(sel)) { flash("Она ходит в решении — спящей ей нельзя."); return; }
+    if (st === "spiky" && roles.eaten.has(sel)) { flash("Её съедают — колючий хвост порвал бы план."); return; }
+    commit(edSetStatus(ed, sel, st));
+  }
+
+  function save() {
+    if (!ed.plan.length) { flash("Сначала разрежь змею: уровень без ходов пуст."); return; }
+    const made = handToCrafted(ed, ordinal);
+    if (!made) { flash("Игра не подтвердила план — такого быть не должно, начни с отмены последней правки."); return; }
+    onSave(made);
+    flash("«" + made.name + "» лёг в пак «Мастерская»" +
+      (made.ceiling > ed.final.length ? " · доска дотягивается до " + made.ceiling + ", отметки от него" : "") + ".");
+  }
+
+  // плеер решения: шаг раз в 0.7 с, в конце сам останавливается
+  useEffect(() => {
+    if (!playing) return;
+    if (timeIdx >= run.states.length - 1) { setPlaying(false); return; }
+    const t = setTimeout(() => setTimeIdx((i) => i + 1), 700);
+    return () => clearTimeout(t);
+  }, [playing, timeIdx, run]);
+
+  const W = ed.w * CS, H = ed.h * CS;
+  const cells = [];
+  for (let y = 0; y < ed.h; y++)
+    for (let x = 0; x < ed.w; x++)
+      cells.push(
+        <rect key={x + "-" + y} x={x * CS + 5} y={y * CS + 5} width={CS - 10} height={CS - 10}
+          rx="16" fill={(x + y) % 2 ? "#F5ECDB" : "#FAF3E6"} />
+      );
+
+  const selRole = !selSnake ? "" :
+    selSnake.decoy ? (selSnake.apple ? " · яблоко-обманка" : " · обманка") :
+    selSnake.id === ed.finalId ? " · финальная" :
+    roles.eaten.has(sel) ? " · съедят ходом " + (ed.plan.findIndex((m) => m.prey === sel) + 1) : "";
+
+  const hintText = run.bad != null
+    ? "План сломан: " + run.why + ". Отмени последнюю правку."
+    : !ed.final
+    ? "Нарисуй финальную змею пальцем — от головы к хвосту. Это итог партии: игрок соберёт её клетка в клетку."
+    : tool === "decoy" ? "Рисуй обманку по свободным клеткам: тень решения для неё закрыта, мост — открыт."
+    : tool === "rock" ? "Валун ставится тапом на пустую клетку вне тени. Повторный тап снимает."
+    : tool === "bridge" ? "Мост можно класть прямо на луч решения: над ним луч пролетает, а на сам мост сядет обманка."
+    : tool === "turn" ? "Плитка ставится тапом; тапы по ней крутят жёлоб, последний — снимает."
+    : tool === "portal" ? "Два тапа: вход и выход. Тап по готовому порталу снимает пару."
+    : !ed.plan.length ? "Тапни по змее и выбери засечку: разрез — это последний ход решения, играться он будет первым с конца."
+    : "Резать можно любой кусок, у едоков тяни хвост за пунктирное кольцо — голова отойдёт, освобождая зазор.";
+
+  return (
+    <div className="hv-screen">
+      <header className="hv-top">
+        <button className="hv-icon" onClick={onExit} aria-label="В меню"><ChevronLeft size={22} /></button>
+        <div className="hv-lvname"><span className="hv-lvnum"><PenLine size={13} /></span> Ручной</div>
+        <button className="hv-icon" onClick={doUndo} disabled={!undoS.length} aria-label="Отменить"><Undo2 size={20} /></button>
+        <button className="hv-icon" onClick={doRedo} disabled={!redoS.length} aria-label="Вернуть"><Redo2 size={20} /></button>
+        <button className="hv-icon" onClick={clearAll} aria-label="Стереть всё"><Trash2 size={19} /></button>
+      </header>
+
+      <div className="hv-handinfo">
+        {!ed.final ? (
+          <>
+            <span className="hv-handsize">
+              <button className="hv-stepb" onClick={() => sizeStep("w", -1)}>−</button>
+              <b>ш {ed.w}</b>
+              <button className="hv-stepb" onClick={() => sizeStep("w", 1)}>+</button>
+            </span>
+            <span className="hv-handsize">
+              <button className="hv-stepb" onClick={() => sizeStep("h", -1)}>−</button>
+              <b>в {ed.h}</b>
+              <button className="hv-stepb" onClick={() => sizeStep("h", 1)}>+</button>
+            </span>
+            <span style={{ flex: 1 }} />
+          </>
+        ) : (
+          <>
+            <span>финал <b>{ed.final.length}</b> · {ходов(ed.plan.length)} · змей {ed.snakes.length}</span>
+            <span style={{ flex: 1 }} />
+          </>
+        )}
+        <button className="hv-btn main small" onClick={save} disabled={!ed.plan.length}>В пак</button>
+      </div>
+
+      <div className="hv-handtools">
+        {HAND_TOOLS.map(([k, nom]) => (
+          <button key={k} className={"hv-chip" + (tool === k ? " on" : "")}
+            onClick={() => { setTool(k); setGateFrom(null); setPend(null); }}>{nom}</button>
+        ))}
+      </div>
+
+      <div className="hv-boardwrap">
+        <svg ref={svgRef} className="hv-board" viewBox={"0 0 " + W + " " + H}
+          style={{ aspectRatio: W + " / " + H, touchAction: "none" }}
+          onPointerDown={boardDown} onPointerMove={boardMove}
+          onPointerUp={boardUp} onPointerLeave={boardUp}>
+          <defs>
+            <clipPath id="hv-handclip"><rect x="0" y="0" width={W} height={H} rx="20" /></clipPath>
+          </defs>
+          <rect x="0" y="0" width={W} height={H} rx="20" fill="#FFFDF8" />
+          {cells}
+          {showShadow && [...shadow.beam].map((k) => {
+            const [x, y] = k.split(",").map(Number);
+            return <rect key={"sb" + k} x={x * CS + 5} y={y * CS + 5} width={CS - 10} height={CS - 10}
+              rx="16" fill="#D26A50" opacity="0.14" />;
+          })}
+          {showShadow && [...shadow.stop].map((k) => {
+            const [x, y] = k.split(",").map(Number);
+            return <rect key={"ss" + k} x={x * CS + 5} y={y * CS + 5} width={CS - 10} height={CS - 10}
+              rx="16" fill="#D26A50" opacity="0.26" />;
+          })}
+          {ed.turns.map(([x, y, a, b]) => <TurnFloor key={"t" + x + "-" + y} x={x} y={y} a={a} b={b} />)}
+          {ed.portals.map(([x, y, u, v], i) => (
+            <g key={"g" + i}>
+              <Gate x={x} y={y} into pair={i} />
+              <Gate x={u} y={v} pair={i} />
+            </g>
+          ))}
+          {ed.bridges.map(([x, y]) => <BridgeFloor key={"bf" + x + "-" + y} x={x} y={y} />)}
+          {ed.rocks.map(([x, y]) => <Rock key={"r" + x + "-" + y} x={x} y={y} />)}
+          <g clipPath="url(#hv-handclip)">
+            {shown.map((s) => {
+              const view = { ...s, color: handColor(s) };
+              return s.apple
+                ? <AppleView key={s.id} snake={view} regRef={regRef} shaking={false} onTap={tapSnake} />
+                : <SnakeView key={s.id} snake={view} regRef={regRef} shaking={false} onTap={tapSnake} />;
+            })}
+          </g>
+          {ed.bridges.map(([x, y]) => <BridgeRail key={"br" + x + "-" + y} x={x} y={y} />)}
+          {ed.turns.map(([x, y, a, b]) => <TurnWalls key={"tw" + x + "-" + y} x={x} y={y} a={a} b={b} />)}
+          {pend && pend.tiles.map(([x, y, a, b]) => (
+            <g key={"pt" + x + "-" + y} opacity="0.55" style={{ pointerEvents: "none" }}>
+              <TurnFloor x={x} y={y} a={a} b={b} />
+              <TurnWalls x={x} y={y} a={a} b={b} />
+            </g>
+          ))}
+          {run.rays[timeIdx] ? (
+            <g opacity="0.8">
+              <RayView ray={run.rays[timeIdx].ray} from={run.rays[timeIdx].from} color="#4F7A38" />
+            </g>
+          ) : null}
+          {ed.plan.map((m, i) => {
+            const s = shown.find((q) => q.id === m.prey);
+            if (!s) return null;
+            const [cx, cy] = toPx(s.cells[0]);
+            return (
+              <g key={"num" + i} style={{ pointerEvents: "none" }}>
+                <circle cx={cx + 30} cy={cy - 30} r="17" fill="#453B33" opacity="0.85" />
+                <text x={cx + 30} y={cy - 30} textAnchor="middle" dominantBaseline="central"
+                  fontFamily="Rubik, sans-serif" fontWeight="800" fontSize="21" fill="#FFFDF4">{i + 1}</text>
+              </g>
+            );
+          })}
+          {selSnake && !selSnake.decoy && cuts.map((c) => {
+            const p = selSnake.cells[c.b - 1], q = selSnake.cells[c.b];
+            const mx = ((p[0] + q[0]) / 2) * CS + CS / 2, my = ((p[1] + q[1]) / 2) * CS + CS / 2;
+            const n = [-(q[1] - p[1]), q[0] - p[0]];
+            return (
+              <g key={"cut" + c.b} style={{ cursor: "pointer" }}
+                onPointerDown={(e) => { e.stopPropagation(); onCut(c); }}>
+                <circle cx={mx} cy={my} r="17" fill={c.needTurn ? "#EFAF3C" : "#FFFDF4"}
+                  stroke="#453B33" strokeWidth="5" />
+                <line x1={mx - n[0] * 11} y1={my - n[1] * 11} x2={mx + n[0] * 11} y2={my + n[1] * 11}
+                  stroke="#453B33" strokeWidth="5" strokeLinecap="round" />
+                <circle cx={mx} cy={my} r="30" fill="transparent" />
+              </g>
+            );
+          })}
+          {editable && tool === "edit" && ed.snakes.filter((s) => roles.eats.has(s.id)).map((s) => {
+            const [cx, cy] = toPx(s.cells[s.cells.length - 1]);
+            const C = COLORS[handColor(s)];
+            return (
+              <g key={"tail" + s.id} style={{ cursor: "grab" }} onPointerDown={(e) => tailDown(e, s.id)}>
+                <circle cx={cx} cy={cy} r="25" fill="#FFFDF4" opacity="0.85"
+                  stroke={C.dark} strokeWidth="5" strokeDasharray="6 7" />
+                <circle cx={cx} cy={cy} r="42" fill="transparent" />
+              </g>
+            );
+          })}
+          {gateFrom && (
+            <circle cx={gateFrom[0] * CS + CS / 2} cy={gateFrom[1] * CS + CS / 2} r="34"
+              fill="none" stroke={GATE_HUE[ed.portals.length % GATE_HUE.length]}
+              strokeWidth="9" strokeDasharray="10 9" style={{ pointerEvents: "none" }} />
+          )}
+          {draw && (
+            <g style={{ pointerEvents: "none" }}>
+              {draw.cells.length > 1 && (
+                <path d={dStr(draw.cells.map(toPx))} fill="none" stroke="#57A040" opacity="0.5"
+                  strokeWidth="54" strokeLinecap="round" strokeLinejoin="round" />
+              )}
+              <circle cx={toPx(draw.cells[0])[0]} cy={toPx(draw.cells[0])[1]} r="26" fill="#57A040" />
+              <text x={toPx(draw.cells[0])[0]} y={toPx(draw.cells[0])[1]} textAnchor="middle" dominantBaseline="central"
+                fontFamily="Rubik, sans-serif" fontWeight="800" fontSize="30" fill="#FFFDF4">{draw.cells.length}</text>
+            </g>
+          )}
+        </svg>
+      </div>
+
+      {selSnake && editable ? (
+        <div className="hv-handsel">
+          <span className="hv-handnom">
+            {COLORS[handColor(selSnake)].nom}{selRole} · {клеток(selSnake.cells.length)}
+            {selSnake.decoy && !lively.has(sel) ? " · мебель: никого не видит и не видна" : ""}
+          </span>
+          <span className="hv-chips">
+            {!selSnake.apple && (
+              <>
+                <button className={"hv-chip" + (!selSnake.spiky && !selSnake.sleep ? " on" : "")}
+                  onClick={() => setStatus("plain")}>обычная</button>
+                <button className={"hv-chip" + (selSnake.sleep ? " on" : "") + (roles.eats.has(sel) ? " off" : "")}
+                  onClick={() => setStatus("sleep")}>спящая</button>
+                <button className={"hv-chip" + (selSnake.spiky ? " on" : "") + (roles.eaten.has(sel) ? " off" : "")}
+                  onClick={() => setStatus("spiky")}>колючая</button>
+              </>
+            )}
+            {selSnake.decoy && (
+              <button className="hv-chip" onClick={() => { setSel(null); commit(edDropDecoy(ed, sel)); }}>убрать</button>
+            )}
+          </span>
+        </div>
+      ) : null}
+
+      {ed.plan.length ? (
+        <div className="hv-handsteps">
+          <button className={"hv-chip" + (timeIdx === 0 ? " on" : "")}
+            onClick={() => { setPlaying(false); setTimeIdx(0); }}>Старт</button>
+          {ed.plan.map((m, i) => (
+            <button key={i} className={"hv-chip" + (timeIdx === i + 1 ? " on" : "")}
+              onClick={() => { setPlaying(false); setTimeIdx(i + 1); }}>{i + 1}</button>
+          ))}
+          <button className="hv-icon" style={{ width: 34, height: 34, flex: "0 0 auto" }}
+            onClick={() => { if (playing) setPlaying(false); else { setSel(null); setTimeIdx(0); setPlaying(true); } }}
+            aria-label="Проиграть решение">
+            {playing ? <Pause size={16} /> : <Play size={16} />}
+          </button>
+        </div>
+      ) : null}
+
+      <footer className="hv-foot">
+        {pend ? (
+          <div className="hv-toast warn">
+            {pend.why}
+            <button className="hv-endbtn" onClick={commitPend}>Поставить</button>
+          </div>
+        ) : toast ? (
+          <div className="hv-toast">{toast}</div>
+        ) : (
+          <div className="hv-lesson">{hintText}</div>
+        )}
+      </footer>
+    </div>
+  );
+}
+
 /* ---------- меню ---------- */
 /* __HV_BUILD__ вшивает Vite (define в vite.config.js): дата сборки и хеш
    коммита. Нужна затем, что service worker обновляет игру молча — без видимой
@@ -3701,7 +4573,7 @@ function CraftModal({ base, cfg, onSet, onClose, onGo, onReset, busy, fail }) {
    прогонов файла вне Vite (esbuild-ворота, вырезки проверок). */
 const BUILD = typeof __HV_BUILD__ !== "undefined" ? __HV_BUILD__ : "дев";
 
-function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft, onDrop, busy, note, inbox, onDump, onClearInbox }) {
+function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft, onHand, onDrop, busy, note, inbox, onDump, onClearInbox }) {
   const pack = packs[packIdx];
   return (
     <div className="hv-screen hv-menu">
@@ -3731,6 +4603,10 @@ function Menu({ packs, stars, records, onPlay, packIdx, onPack, crafted, onCraft
             </div>
           ) : null}
           <div className="hv-presets">
+            <button className="hv-preset hv-handbtn" disabled={!!busy} onClick={onHand}>
+              <PenLine size={14} /> ручной
+              <span className="hv-presetmeta">нарисуй финальную змею и разрежь её на ходы</span>
+            </button>
             {Object.keys(PRESETS).map((name) => (
               <button key={name} className="hv-preset" disabled={!!busy} onClick={() => onCraft(name)}>
                 <Sliders size={14} /> {name}
@@ -3974,12 +4850,19 @@ export default function App() {
           busy={busy}
           note={note}
           onCraft={(name) => { setCraftFail(null); setCraftOpen(name); }}
+          onHand={() => setScreen("hand")}
           onDrop={onDrop}
           onPack={(i) => { setPackIdx(i); setIdx(0); setNote(null); }}
           onPlay={(i) => { setIdx(i); setScreen("game"); }}
           inbox={inbox.length}
           onDump={dumpInbox}
           onClearInbox={clearInbox}
+        />
+      ) : screen === "hand" ? (
+        <HandCraft
+          ordinal={crafted.filter((c) => c.preset === "ручной").length + 1}
+          onExit={() => setScreen("menu")}
+          onSave={(made) => { saveCrafted([...crafted, made]); setNote(`Готово: ${made.name}.`); }}
         />
       ) : (
         <Game
@@ -4292,6 +5175,28 @@ body{overflow-x:hidden;-webkit-text-size-adjust:100%;}
 .hv-lvmeta{font-size:12px;color:#9C8F7B;}
 .hv-lvstars{display:flex;gap:3px;}
 .hv-note{margin-top:16px;font-size:11.5px;color:#B4A791;}
+
+/* «Ручной»: карточка-вход шириной во весь ряд пресетов и обвязка экрана.
+   Всё остальное собрано из готовых кирпичей — чипы, тосты, кнопки. */
+.hv-handbtn{grid-column:1 / -1;border-style:dashed;border-color:#D9C9AC;}
+.hv-handinfo{display:flex;align-items:center;gap:10px;margin-bottom:10px;
+  font-size:13px;color:#6E6154;flex-wrap:wrap;}
+.hv-handinfo b{font-variant-numeric:tabular-nums;color:#453B33;}
+.hv-handsize{display:flex;align-items:center;gap:4px;}
+.hv-handsize b{min-width:36px;text-align:center;font-size:13px;font-weight:800;}
+.hv-handsize .hv-stepb{width:28px;height:28px;font-size:15px;}
+.hv-handtools{display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;overflow-y:hidden;
+  scrollbar-width:none;-ms-overflow-style:none;-webkit-overflow-scrolling:touch;}
+.hv-handtools::-webkit-scrollbar{display:none;}
+.hv-handtools .hv-chip{flex:0 0 auto;}
+.hv-handsteps{display:flex;gap:6px;align-items:center;margin-top:10px;overflow-x:auto;overflow-y:hidden;
+  scrollbar-width:none;-ms-overflow-style:none;-webkit-overflow-scrolling:touch;}
+.hv-handsteps::-webkit-scrollbar{display:none;}
+.hv-handsteps .hv-chip{flex:0 0 auto;min-width:34px;text-align:center;}
+.hv-handsel{display:flex;flex-direction:column;gap:7px;margin-top:10px;padding:9px 11px;
+  border-radius:12px;background:#FFFFFF;border:1px solid #EBDFCB;}
+.hv-handnom{font-size:12.5px;color:#6E6154;}
+.hv-chip.off{opacity:.45;}
 
 @media (prefers-reduced-motion: reduce){
   .hv-shake,.hv-dash,.hv-plus,.hv-star,.hv-squigpath,.hv-tongue{animation:none !important;}
