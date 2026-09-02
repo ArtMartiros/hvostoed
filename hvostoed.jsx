@@ -2584,11 +2584,15 @@ function edCutTurn(ed, sid, b) {
 /* Пятка: голова сходит на tails.length клеток своего тела (они освобождаются
    под зазор), хвост дорастает клетками tails. Изгибы зазора собираются в
    предложение плиток — ставит их игрок кнопкой; на бывшей голове плитка не
-   нужна никогда (луч приходит тем же направлением, каким уходил). */
+   нужна никогда (луч приходит тем же направлением, каким уходил). На рельсе
+   может остаться одна клетка — тогда взгляд задаёт первая клетка хвоста, как
+   у генератора; ляжет ли она на линию луча, рассудит прогон. Без этого
+   короткому среднему куску не сделать зазор — а только зазор двигает его
+   хвост под чужой прицел и запирает порядок ходов. */
 function edRetreat(ed, sid, tails) {
   const A = ed.snakes.find((s) => s.id === sid);
   const k = tails.length;
-  if (!A || A.decoy || A.apple || k < 1 || A.cells.length - k < 2) return null;
+  if (!A || A.decoy || A.apple || k < 1 || A.cells.length - k < 1) return null;
   const occ = edOccSet(ed), rocks = edRockSet(ed);
   let prev = A.cells[A.cells.length - 1];
   for (const c of tails) {
@@ -3921,6 +3925,7 @@ function HandCraft({ ordinal, onSave, onExit }) {
   const [tool, setTool] = useState("edit");
   const [sel, setSel] = useState(null);
   const [draw, setDraw] = useState(null);          // рисуемая пальцем змея: { kind, cells }
+  const [ghost, setGhost] = useState(null);        // недобранный хвост пятки: копится до сборки зазора
   const [timeIdx, setTimeIdx] = useState(0);       // машина времени: 0 — старт партии
   const [playing, setPlaying] = useState(false);
   const [toast, setToast] = useState(null);
@@ -4128,7 +4133,7 @@ function HandCraft({ ordinal, onSave, onExit }) {
     const tails = [...dr.pend, c];
     const r = edRetreat(ed, dr.sid, tails);
     if (!r) return;
-    if (edRun(r.ed).bad == null) { dr.pend = []; setEd(r.ed); return; }
+    if (edRun(r.ed).bad == null) { dr.pend = []; setGhost(null); setEd(r.ed); return; }
     if (r.tiles && r.tiles.length) {
       const withT = { ...r.ed, turns: [...r.ed.turns, ...r.tiles],
         autoTiles: [...r.ed.autoTiles, ...r.tiles.map(([x, y]) => ckey(x, y))] };
@@ -4136,16 +4141,23 @@ function HandCraft({ ordinal, onSave, onExit }) {
         if (dr.base !== ed) { setUndoS((u) => [...u.slice(-79), dr.base]); setRedoS([]); }
         setPend({ ed: withT, tiles: r.tiles, why: "Луч гнётся на зазоре: нужен поворот." });
         dragRef.current = null;
+        setGhost(null);
         return;
       }
     }
-    if (tails.length < 4) dr.pend = tails;
+    // зазор ещё не собрался — копим без лимита (предел ставит длина едока)
+    // и показываем недобор призраком, чтобы жест не выглядел мёртвым
+    dr.pend = tails;
+    setGhost({ sid: dr.sid, cells: tails });
   }
 
   function boardUp() {
     const dr = dragRef.current;
     if (dr) {
       dragRef.current = null;
+      setGhost(null);
+      if (dr.pend.length)
+        flash("Зазор не собрался: луч по этим клеткам не проходит. Тяни дальше вдоль тела — изгиб берётся только целиком.");
       if (dr.base !== ed) { setUndoS((u) => [...u.slice(-79), dr.base]); setRedoS([]); }
       return;
     }
@@ -4167,6 +4179,34 @@ function HandCraft({ ordinal, onSave, onExit }) {
     if (st === "sleep" && roles.eats.has(sel)) { flash("Она ходит в решении — спящей ей нельзя."); return; }
     if (st === "spiky" && roles.eaten.has(sel)) { flash("Её съедают — колючий хвост порвал бы план."); return; }
     commit(edSetStatus(ed, sel, st));
+  }
+
+  // автопятка на шаг: сама подбирает клетку хвоста, изгиб отдаёт pend-кнопкой
+  function pullOnce() {
+    const A = ed.snakes.find((s) => s.id === sel);
+    if (!A) return;
+    const near = ([x, y]) => [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]];
+    const tryTails = (tails) => {
+      const r = edRetreat(ed, sel, tails);
+      if (!r) return false;
+      if (edRun(r.ed).bad == null) { commit(r.ed); return true; }
+      if (r.tiles && r.tiles.length) {
+        const withT = { ...r.ed, turns: [...r.ed.turns, ...r.tiles],
+          autoTiles: [...r.ed.autoTiles, ...r.tiles.map(([x, y]) => ckey(x, y))] };
+        if (edRun(withT).bad == null) {
+          setPend({ ed: withT, tiles: r.tiles, why: "Луч гнётся на зазоре: нужен поворот." });
+          return true;
+        }
+      }
+      return false;
+    };
+    const tl = A.cells[A.cells.length - 1];
+    for (const c of near(tl)) if (tryTails([c])) return;
+    // изгиб у головы берётся только двойным шагом — плитка встаёт на зазор
+    for (const c1 of near(tl))
+      for (const c2 of near(c1))
+        if (!(c2[0] === tl[0] && c2[1] === tl[1]) && tryTails([c1, c2])) return;
+    flash("Оттянуть не выходит: хвосту некуда лечь так, чтобы луч собрался.");
   }
 
   function save() {
@@ -4346,6 +4386,21 @@ function HandCraft({ ordinal, onSave, onExit }) {
               fill="none" stroke={GATE_HUE[ed.portals.length % GATE_HUE.length]}
               strokeWidth="9" strokeDasharray="10 9" style={{ pointerEvents: "none" }} />
           )}
+          {ghost && (() => {
+            const gs = ed.snakes.find((s) => s.id === ghost.sid);
+            const C = COLORS[gs ? handColor(gs) : "green"];
+            const pts = (gs ? [gs.cells[gs.cells.length - 1]] : []).concat(ghost.cells).map(toPx);
+            return (
+              <g style={{ pointerEvents: "none" }} opacity="0.45">
+                {pts.length > 1 && (
+                  <path d={dStr(pts)} fill="none" stroke={C.fill} strokeWidth="50"
+                    strokeLinecap="round" strokeLinejoin="round" strokeDasharray="18 22" />
+                )}
+                <circle cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]} r="24"
+                  fill="none" stroke={C.dark} strokeWidth="7" strokeDasharray="7 8" />
+              </g>
+            );
+          })()}
           {draw && (
             <g style={{ pointerEvents: "none" }}>
               {draw.cells.length > 1 && (
@@ -4379,6 +4434,9 @@ function HandCraft({ ordinal, onSave, onExit }) {
             )}
             {selSnake.decoy && (
               <button className="hv-chip" onClick={() => { setSel(null); commit(edDropDecoy(ed, sel)); }}>убрать</button>
+            )}
+            {roles.eats.has(sel) && (
+              <button className="hv-chip" onClick={pullOnce}>оттянуть +1</button>
             )}
           </span>
         </div>
