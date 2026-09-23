@@ -30,3 +30,7 @@ pnpm-debug.log*
 
 # Claude Code
 .claude/scheduled_tasks.lock
+
+# Выхлоп замеров research/
+research/out/
+research/intro-pack.out

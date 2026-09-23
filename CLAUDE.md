@@ -3,7 +3,8 @@
 Головоломка про змей, которые едят друг друга за хвост:
 https://artmartiros.github.io/hvostoed/
 Замеры и история решений — [hvostoed-brief.md](hvostoed-brief.md) · процесс
-итераций — [process.md](process.md) · текущий тест — [mvp-plan.md](mvp-plan.md).
+итераций — [process.md](process.md) · текущий тест — [mvp-plan.md](mvp-plan.md) ·
+рынок, аудитории и ветки — [market-analysis.md](market-analysis.md).
 `AGENTS.md` — симлинк на этот файл, правится всегда ЭТОТ. Язык проекта — русский:
 комментарии, интерфейс, коммиты.
 
@@ -70,6 +71,7 @@ w, h, sections: [{ x, y, w, h, snakes }] }` — доска открываетс�
 | `*.out` | выхлопы генераторов, история отбора |
 | `gen2.js` `gen3.mjs` `levels-reserve.jsx` | старые генераторы и резерв уровней |
 | `mvp.html` `src/mvp.jsx` | MVP-поток для теста трафика (`HV_ANALYTICS` в mvp.html) |
+| `research/` | замеры кодом игры к market-analysis.md (тоже режут по якорю `const SIDES = { n:`) |
 | `src/main.jsx` `index.html` `vite.config.js` | обвязка Vite, service worker |
 
 ## Проверки
